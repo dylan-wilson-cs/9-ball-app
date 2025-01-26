@@ -1,6 +1,7 @@
 <script lang="ts">
     import Ball from "$lib/components/Ball.svelte";
     import GameSetup from "$lib/components/GameSetup.svelte";
+    import { getNextBallState } from "$lib/types/game";
     import Icon from "../images/9ball.png";
 
     // Game state using runes
@@ -40,7 +41,7 @@
 
         const isBall9 = ballIndex === 8;
         const currentState = ballStates[ballIndex];
-        const nextState = currentState === "available" ? "sunk" : "available";
+        const nextState = getNextBallState(currentState, isBall9);
 
         if (
             isBall9 &&
@@ -53,11 +54,21 @@
         }
 
         // Update score
-        const points = isBall9 ? 10 : 1;
-        if (currentPlayer === 0) {
-            score1 += nextState === "sunk" ? points : -points;
-        } else {
-            score2 += nextState === "sunk" ? points : -points;
+        if (currentState === "sunk" && nextState !== "sunk") {
+            // Decrement score when unsinking a ball
+            if (currentPlayer === 0) {
+                score1 -= isBall9 ? 2 : 1;
+            } else {
+                score2 -= isBall9 ? 2 : 1;
+            }
+        }
+        // Add point if pocketing a ball
+        else if (currentState !== "sunk" && nextState === "sunk") {
+            if (currentPlayer === 0) {
+                score1 += isBall9 ? 2 : 1;
+            } else {
+                score2 += isBall9 ? 2 : 1;
+            }
         }
 
         // Update ball states
