@@ -1,0 +1,139 @@
+site:
+  base_url: "https://league.poolplayers.com"
+  login_path: "/login"
+  # Placeholders -- update these after inspecting your local league portal's
+  # actual URLs (view source / devtools network tab while browsing logged in).
+  standings_path: "/standings"
+  team_path_template: "/teams/{team_id}"
+  player_path_template: "/players/{player_id}"
+
+league:
+  league_id: "CHANGE_ME"
+  division_id: "CHANGE_ME"
+  season: "2026 Summer"
+
+team:
+  team_id: "13082948"
+  team_name: "Team 13082948"
+
+apa:
+  # Set APA_ACCESS_TOKEN in the environment; do not put a token here.
+  league_id: 1438
+  division_id: 436670
+
+database:
+  path: "data/apa_tracker.db"
+
+session:
+  cache_path: ".session_cache/cookies.pkl"
+  timeout_seconds: 15
+  max_retries: 3
+
+scheduler:
+  daily_sync_hour: 6
+  weekly_refresh_day: "Sunday"
+  weekly_refresh_hour: 5
+
+export:
+  # Renamed from "apa_stats.xlsx" -- a never-before-used filename so any
+  # prior copy Excel might have cached (Trusted Documents, MRU, Protected
+  # View state) under the old name/path is guaranteed irrelevant to this
+  # one. Does not itself change workbook content, table/validation/
+  # autofilter logic, or analytics -- see ui/export_excel.py and
+  # tests/test_export_excel.py::TestGeneratedFileOpensWithoutRepair for
+  # the real, byte-level fix and its regression coverage.
+  excel_output_path: "exports/apa_stats_fresh.xlsx"
+  json_output_path: "exports/apa_data.json"
+
+# The Lineup Optimizer's real objective weights (analytics/lineup_optimizer.py,
+# docs/lineup_optimizer.md): Fij = weight_matchup_score*matchup_score +
+# weight_win_probability*win_probability + weight_confidence*confidence +
+# weight_risk_penalty*(1 - risk_factor). Values below are the module's
+# original, already-verified defaults -- present here so they're
+# discoverable and overridable, not because the formula or its defaults
+# changed. Missing this whole section, or any one key in it, falls back to
+# these same defaults (scripts.build_lineups.load_weights_from_config).
+lineup_optimizer:
+  weight_matchup_score: 0.50
+  weight_win_probability: 0.30
+  weight_confidence: 0.15
+  weight_risk_penalty: 0.05
+  # Off by default: analytics.win_probability's MODELED estimate (see the
+  # win_probability section below) is a separate, new signal from the
+  # real, observed weight_win_probability above -- see
+  # analytics.lineup_optimizer.PairingCandidate.modeled_win_probability's
+  # own docstring for why the two are never conflated. 0.0 means every
+  # existing lineup keeps its original four-term score unless this is
+  # explicitly set.
+  weight_modeled_win_probability: 0.0
+
+# analytics/win_probability.py's real objective weights -- a hand-rolled,
+# transparent logistic model, DISTINCT from the Lineup Optimizer's own
+# formula above (see docs/win_probability.md for the full writeup,
+# including what was checked against this project's own real H2H data
+# before picking these defaults, and why RaceDifficulty is a documented
+# v1 gap rather than implemented or fabricated):
+#
+#   z = weight_sl_delta*SLDelta + weight_wr_sl*WR_SL + weight_wr_h2h*WR_H2H
+#       - weight_volatility*Volatility
+#   P(win) = 1 / (1 + e^(-logistic_scale * z)), clamped to [clamp_min, clamp_max]
+#
+# Missing this whole section, or any one key in it, falls back to these
+# same defaults (scripts.build_lineups.load_win_probability_weights_from_config).
+win_probability:
+  weight_sl_delta: 0.15
+  weight_wr_sl: 0.20
+  weight_wr_h2h: 0.30
+  weight_volatility: 0.05
+  logistic_scale: 1.0
+  clamp_min: 0.02
+  clamp_max: 0.98
+
+# analytics/lineup_risk.py's real objective weights -- elevates the
+# Lineup Optimizer's per-PAIRING signals (modeled_win_probability,
+# volatility) to a per-LINEUP summary (see docs/lineup_risk.md):
+#
+#   URI = sum((1 - modeled_win_probability) * volatility) over the lineup
+#   ASS = modeled_win_probability - volatility, for the lineup's anchor
+#         (the assigned player with the highest modeled_win_probability)
+#   LVL = sum(volatility) over the lineup
+#   DMC = count of assignments with modeled_win_probability < danger_threshold
+#   LRS = weight_upset_risk*URI + weight_anchor_instability*(1-ASS)
+#       + weight_volatility_load*LVL + weight_danger_count*DMC
+#
+# A transparent decision-support scalar, not a fitted probability model --
+# there is no historical "which lineup actually won" record to check its
+# ranking against (the same real gap docs/lineup_optimizer.md documents
+# for the optimizer's own combined score), so these are a reasoned,
+# roughly-equal starting split, not claimed as empirically fit. Missing
+# this whole section, or any one key in it, falls back to these same
+# defaults (scripts.build_lineups.load_lineup_risk_weights_from_config).
+lineup_risk:
+  weight_upset_risk: 0.30
+  weight_anchor_instability: 0.30
+  weight_volatility_load: 0.20
+  weight_danger_count: 0.20
+  danger_threshold: 0.40
+
+# analytics/rationale.py's toggles -- real, plain-language explanations of
+# already-computed real numbers (see docs/lineup_risk.md and
+# analytics/rationale.py's own module docstring for why per-pairing
+# rationale is NOT duplicated here: it already exists and is already
+# wired into Captain's Edge and the Lineup Optimizer). Missing this
+# section, or the key within it, falls back to including the rationale
+# (scripts.build_lineups.load_rationale_toggles_from_config).
+rationale:
+  include_lineup_rationale: true
+
+# analytics/opponent_scouting.py's real "this opponent is dangerous"
+# thresholds (see docs/opponent_scouting.md). Not claimed as empirically
+# fit -- the same real gap every other threshold in this project
+# documents. Missing this section, or a key within it, falls back to
+# these defaults (scripts.build_lineups.load_opponent_scouting_thresholds_from_config).
+opponent_scouting:
+  win_probability_danger_threshold: 0.40
+  volatility_danger_threshold: 0.50
+
+logging:
+  level: "INFO"
+  file: "logs/apa_tracker.log"

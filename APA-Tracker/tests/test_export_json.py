@@ -1,0 +1,826 @@
+"""Tests for ui.export_json -- the JSON counterpart to ui.export_excel.
+
+Seeds a small in-memory database through the real ingest functions (not
+hand-built ORM rows) so this exercises the same path export_to_json will
+see in practice, then checks both the returned file's shape and that it's
+valid, re-loadable JSON -- the "lightweight validation" the demo's JSON
+export needs, independent of whatever HTML consumes it.
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+
+from database.ingest import (
+    ingest_eight_ball_stats,
+    ingest_head_to_head,
+    ingest_match,
+    ingest_match_scores,
+    ingest_matchups,
+    ingest_player_team_history,
+    ingest_standings,
+    upsert_player,
+    upsert_team,
+)
+from database.models import Base, PlayerTrend, Team
+from ui.export_json import export_to_json
+
+REQUIRED_TOP_LEVEL_KEYS = {
+    "generated_at", "teams", "matches", "standings", "player_stats",
+    "match_scores", "career_stats", "team_history", "skill_level_history",
+    "skill_level_summary", "matchups", "player_trends", "close_match_stats",
+    "team_roster", "opponent_rosters", "schedule",
+    "lineup_legality_rule", "lineup_legality",
+}
+
+REQUIRED_MATCH_KEYS = {
+    "match_id", "week", "home_team_id", "home_team_name", "away_team_id",
+    "away_team_name", "home_score", "away_score", "status", "match_date",
+    "is_bye", "is_scored", "is_finalized",
+}
+
+REQUIRED_PLAYER_STATS_KEYS = {
+    "player", "team", "skill_level", "matches", "wins", "losses", "win_pct",
+    "ppm", "pa", "avg_points", "source",
+}
+
+
+@pytest.fixture
+def db():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        yield session
+
+
+@pytest.fixture
+def seeded_db(db):
+    upsert_team(db, "T1", "Chalk It Up")
+    upsert_team(db, "T2", "Rack Attack")
+    ingest_match(
+        db, match_id="M1", home_team_id="T1", away_team_id="T2",
+        home_team_name="Chalk It Up", away_team_name="Rack Attack",
+        week=9, status="COMPLETED", home_score=18, away_score=12,
+        is_scored=True, is_finalized=True,
+    )
+    ingest_match_scores(
+        db, "M1",
+        [
+            {"player_id": "P1", "player_name": "Alice", "team_id": "T1", "skill_level": 5,
+             "result": "W", "points_earned": 6},
+            {"player_id": "P2", "player_name": "Bob", "team_id": "T2", "skill_level": 4,
+             "result": "L", "points_earned": 3},
+        ],
+    )
+    ingest_standings(
+        db,
+        [{"team_name": "Chalk It Up", "rank": 1, "wins": None, "losses": None, "points": 142}],
+    )
+    return db
+
+
+def _export(db, tmp_path):
+    config = {"export": {"json_output_path": str(tmp_path / "demo.json")}}
+    path = export_to_json(db, config)
+    return json.loads((tmp_path / "demo.json").read_text())
+
+
+class TestShape:
+    def test_top_level_keys_present(self, seeded_db, tmp_path):
+        document = _export(seeded_db, tmp_path)
+        assert REQUIRED_TOP_LEVEL_KEYS.issubset(document.keys())
+
+    def test_teams_are_present(self, seeded_db, tmp_path):
+        document = _export(seeded_db, tmp_path)
+        names = {t["team_name"] for t in document["teams"]}
+        assert names == {"Chalk It Up", "Rack Attack"}
+
+    def test_match_row_has_every_required_key(self, seeded_db, tmp_path):
+        document = _export(seeded_db, tmp_path)
+        assert len(document["matches"]) == 1
+        assert REQUIRED_MATCH_KEYS.issubset(document["matches"][0].keys())
+
+    def test_match_scores_round_trip(self, seeded_db, tmp_path):
+        document = _export(seeded_db, tmp_path)
+        match = document["matches"][0]
+        assert match["home_score"] == 18
+        assert match["away_score"] == 12
+        assert match["is_finalized"] is True
+
+    def test_standings_row_shape(self, seeded_db, tmp_path):
+        document = _export(seeded_db, tmp_path)
+        assert document["standings"] == [
+            {"rank": 1, "team_name": "Chalk It Up", "wins": None, "losses": None, "points": 142.0,
+             "captured_at": document["standings"][0]["captured_at"]}
+        ]
+
+    def test_player_stats_row_has_every_required_key(self, seeded_db, tmp_path):
+        document = _export(seeded_db, tmp_path)
+        assert len(document["player_stats"]) == 2
+        assert REQUIRED_PLAYER_STATS_KEYS.issubset(document["player_stats"][0].keys())
+
+    def test_player_stats_source_is_match_history(self, seeded_db, tmp_path):
+        document = _export(seeded_db, tmp_path)
+        sources = {row["source"] for row in document["player_stats"]}
+        assert sources == {"match history"}
+
+    def test_player_stats_team_is_backfilled_from_the_scoresheet_even_when_never_rostered(
+        self, seeded_db, tmp_path
+    ):
+        """seeded_db's Alice/Bob only ever go through ingest_match_scores(),
+        never upsert_roster() -- but ingest_match_scores() itself backfills
+        Player.team_id from the real team_id on each scoresheet entry (see
+        database.ingest.backfill_player_team), so "never rostered" no
+        longer means "no team known"."""
+        document = _export(seeded_db, tmp_path)
+        teams = {row["team"] for row in document["player_stats"]}
+        assert teams == {"Chalk It Up", "Rack Attack"}
+
+    def test_player_stats_team_is_blank_when_the_scoresheet_carries_no_team_id_either(
+        self, db, tmp_path
+    ):
+        """The genuinely-no-evidence case: neither a roster ingest nor a
+        scoresheet team_id ever named a team for this player. Blank, not a
+        guess."""
+        ingest_match(db, match_id="M1", home_team_id="T1", away_team_id="T2",
+                      home_team_name="Chalk It Up", away_team_name="Rack Attack", week=1)
+        ingest_match_scores(db, "M1", [
+            {"player_id": "P1", "player_name": "Alice", "result": "W", "points_earned": 6},
+        ])
+        document = _export(db, tmp_path)
+        teams = {row["team"] for row in document["player_stats"]}
+        assert teams == {""}
+
+    def test_player_stats_team_reflects_the_roster_a_player_is_on(self, db, tmp_path):
+        """A player on two of the account's teams during a season shows up
+        as two rows here, one per team -- the "team" field is what makes
+        that a legible split instead of a mystery duplicate."""
+        team = upsert_team(db, "T1", "Mark It Up")
+        upsert_player(db, "3349374", "Paul Smith", team)
+        document = _export(db, tmp_path)
+        assert document["player_stats"][0]["team"] == "Mark It Up"
+
+    def test_match_scores_are_keyed_by_the_matchs_external_id(self, seeded_db, tmp_path):
+        document = _export(seeded_db, tmp_path)
+        assert set(document["match_scores"].keys()) == {"M1"}
+        rows = {r["player"]: r for r in document["match_scores"]["M1"]}
+        assert rows["Alice"]["result"] == "W"
+        assert rows["Alice"]["points_earned"] == 6.0
+        assert rows["Bob"]["result"] == "L"
+
+    def test_a_match_with_no_scoresheet_is_absent_not_an_empty_list(self, db, tmp_path):
+        """ingest_viewer_data-only matches never get a scoresheet -- absent
+        is more honest than a key that's always there but always empty."""
+        upsert_team(db, "T1", "Chalk It Up")
+        upsert_team(db, "T2", "Rack Attack")
+        ingest_match(
+            db, match_id="M2", home_team_id="T1", away_team_id="T2",
+            home_team_name="Chalk It Up", away_team_name="Rack Attack",
+        )
+        document = _export(db, tmp_path)
+        assert document["match_scores"] == {}
+
+
+class TestEmptyDatabase:
+    """Nothing ingested yet must produce a valid, empty-list document, not
+    an error -- a fresh checkout runs the demo before anything is ingested."""
+
+    def test_empty_database_yields_empty_lists_not_an_error(self, db, tmp_path):
+        document = _export(db, tmp_path)
+        assert document["teams"] == []
+        assert document["matches"] == []
+        assert document["standings"] == []
+        assert document["player_stats"] == []
+        assert document["career_stats"] == []
+        assert document["team_history"] == []
+        assert document["skill_level_history"] == []
+        assert document["skill_level_summary"] == []
+        assert document["matchups"] == []
+        assert document["player_trends"] == []
+        assert document["close_match_stats"] == []
+
+    def test_generated_at_is_always_present(self, db, tmp_path):
+        document = _export(db, tmp_path)
+        assert document["generated_at"]
+
+
+class TestCareerStatsAndTeamHistory:
+    """HANDOFF.md item 2, now confirmed and wired end to end."""
+
+    def test_career_stats_row_shape(self, db, tmp_path):
+        team = upsert_team(db, "T1", "Mark It Up")
+        player = upsert_player(db, "3349374", "Paul Smith", team)
+        ingest_eight_ball_stats(db, player, {
+            "eight_ball_matches_won": 64, "eight_ball_matches_played": 129,
+            "eight_ball_cla": 1, "eight_ball_defensive_shot_avg": 1.26,
+            "eight_ball_match_count_for_last_two_yrs": 123, "eight_ball_last_played": "2026-08-31",
+            "eight_ball_on_break_count": 30, "eight_ball_break_and_runs": 5,
+            "eight_ball_rackless": 2, "eight_ball_mini_slams": 1,
+        })
+        document = _export(db, tmp_path)
+        assert document["career_stats"] == [{
+            "player": "Paul Smith", "format": "EIGHT", "matches_won": 64,
+            "matches_played": 129, "cla": 1, "defensive_shot_avg": 1.26,
+            "match_count_last_two_yrs": 123, "last_played": "2026-08-31",
+            "on_break_count": 30, "break_and_runs": 5, "mini_slams": 1,
+            "rackless": 2, "skunks": None,
+        }]
+
+    def test_team_history_row_shape(self, db, tmp_path):
+        team = upsert_team(db, "T1", "Mark It Up")
+        player = upsert_player(db, "3349374", "Paul Smith", team)
+        ingest_player_team_history(db, player, [{
+            "is_current": True, "team_name": "Mark It Up", "division_id": "436670",
+            "is_tournament": False, "session_name": "2026 Summer", "nick_name": "Paulie",
+            "skill_level": 4, "rank": None, "matches_won": 2, "matches_played": 2,
+        }])
+        document = _export(db, tmp_path)
+        assert document["team_history"] == [{
+            "player": "Paul Smith", "is_current": True, "team_name": "Mark It Up",
+            "division_id": "436670", "is_tournament": False, "session_name": "2026 Summer",
+            "nick_name": "Paulie", "skill_level": 4, "rank": None,
+            "matches_won": 2, "matches_played": 2,
+        }]
+
+
+class TestSkillLevelHistory:
+    """Not a new extraction step -- ingest_match_scores/ingest_match_roster
+    already write PlayerMatch.skill_level per match; this reads it back out
+    match-by-match instead of only the current Player.skill_level snapshot."""
+
+    def test_skill_level_history_row_shape(self, db, tmp_path):
+        upsert_team(db, "T1", "Mark It Up")
+        upsert_team(db, "T2", "Rack Attack")
+        ingest_match(db, match_id="M1", home_team_id="T1", away_team_id="T2",
+                     home_team_name="Mark It Up", away_team_name="Rack Attack",
+                     week=1, match_date="2026-06-01", status="COMPLETED",
+                     home_score=6, away_score=3)
+        ingest_match_scores(db, "M1", [
+            {"player_id": "3349374", "player_name": "Paul Smith", "team_id": "T1",
+             "skill_level": 5, "result": "W", "points_earned": 6},
+        ])
+        document = _export(db, tmp_path)
+        assert document["skill_level_history"] == [{
+            "player": "Paul Smith", "player_id": "3349374", "week": 1,
+            "skill_level": 5, "match_date": "2026-06-01", "source": "scoresheet",
+        }]
+
+    def test_trend_volatility_and_last_change_across_two_matches(self, db, tmp_path):
+        upsert_team(db, "T1", "Mark It Up")
+        upsert_team(db, "T2", "Rack Attack")
+        ingest_match(db, match_id="M1", home_team_id="T1", away_team_id="T2",
+                     home_team_name="Mark It Up", away_team_name="Rack Attack",
+                     week=1, match_date="2026-06-01", status="COMPLETED",
+                     home_score=6, away_score=3)
+        ingest_match_scores(db, "M1", [
+            {"player_id": "3349374", "player_name": "Paul Smith", "team_id": "T1",
+             "skill_level": 5, "result": "W", "points_earned": 6},
+        ])
+        ingest_match(db, match_id="M2", home_team_id="T1", away_team_id="T2",
+                     home_team_name="Mark It Up", away_team_name="Rack Attack",
+                     week=7, match_date="2026-07-20", status="COMPLETED",
+                     home_score=6, away_score=3)
+        ingest_match_scores(db, "M2", [
+            {"player_id": "3349374", "player_name": "Paul Smith", "team_id": "T1",
+             "skill_level": 6, "result": "W", "points_earned": 6},
+        ])
+        document = _export(db, tmp_path)
+
+        assert [row["week"] for row in document["skill_level_history"]] == [1, 7]
+        assert document["skill_level_summary"] == [{
+            "player": "Paul Smith", "player_id": "3349374", "current_skill_level": 6,
+            "trend": "up", "volatility": 1, "last_change": "SL 5 → SL 6 in Week 7",
+        }]
+
+    def test_a_player_never_scored_has_no_skill_level_history(self, db, tmp_path):
+        """A player known only from a roster/name, never a scored match, has
+        no skill_level reading to show -- absent, not a fabricated zero."""
+        upsert_team(db, "T1", "Mark It Up")
+        upsert_player(db, "P9", "Bench Player")
+        document = _export(db, tmp_path)
+        assert document["skill_level_history"] == []
+        assert document["skill_level_summary"] == []
+
+
+class TestMatchups:
+    """The Matchup Advantage Engine's aggregate (PlayerMatchup) -- this only
+    checks the export shape, not the scoring math itself. See
+    tests/test_matchups.py for the analytics functions and
+    tests/test_ingest.py for ingest_matchups()."""
+
+    def test_matchup_row_shape(self, db, tmp_path):
+        upsert_player(db, "501", "Player One")
+        upsert_player(db, "601", "Player Four")
+        ingest_matchups(db, [{
+            "player_id": "501", "opponent_id": "601", "matches_played": 3,
+            "win_rate": 0.667, "avg_points_earned": 5.0,
+            "avg_opponent_skill_level": 5.0, "avg_own_skill_level": 4.0, "sl_delta": 1.0,
+            "trend": "up", "volatility": 1, "matchup_score": 72, "confidence_score": 63,
+        }])
+        document = _export(db, tmp_path)
+        assert document["matchups"] == [{
+            "player": "Player One", "player_id": "501", "opponent": "Player Four",
+            "opponent_id": "601", "matches_played": 3, "win_rate": 0.667,
+            "avg_points_earned": 5.0, "avg_opponent_skill_level": 5.0, "avg_own_skill_level": 4.0,
+            "sl_delta": 1.0, "trend": "up", "volatility": 1, "matchup_score": 72, "confidence_score": 63,
+            "format": None, "session_name": None, "has_history": True,
+        }]
+
+class TestPlayerTrends:
+    """Previously not exported here at all -- the demo tab reads
+    player_trends straight from the database instead of this JSON. Real,
+    already-computed fields, plus trend_score (analytics.player_trends.
+    trend_score), itself a pure function of two of this row's own fields."""
+
+    def test_a_real_trend_row_shape_including_the_derived_trend_score(self, db, tmp_path):
+        player = upsert_player(db, "P1", "Alice")
+        db.add(PlayerTrend(
+            player_id=player.id, format="8-ball", session_name="Fall 2026",
+            sample_size=8, current_skill_level=5, regression_slope=0.08,
+            volatility=0.2, sl_stability=0.83, hot_cold_flag="HOT",
+            projected_sl_change_probability=0.6,
+        ))
+        db.commit()
+
+        document = _export(db, tmp_path)
+        assert document["player_trends"] == [{
+            "player": "Alice", "format": "8-ball", "session_name": "Fall 2026",
+            "sample_size": 8, "current_skill_level": 5, "regression_slope": 0.08,
+            "volatility": 0.2, "sl_stability": 0.83, "hot_cold_flag": "HOT",
+            "projected_sl_change_probability": 0.6,
+            "trend_score": round(0.08 / (0.2 + 0.05), 4),
+        }]
+
+    def test_insufficient_evidence_is_a_real_null_not_a_fabricated_score(self, db, tmp_path):
+        player = upsert_player(db, "P1", "Alice")
+        db.add(PlayerTrend(
+            player_id=player.id, format="8-ball", session_name="Fall 2026",
+            sample_size=1, current_skill_level=5, regression_slope=None,
+            volatility=None, sl_stability=None, hot_cold_flag=None,
+            projected_sl_change_probability=None,
+        ))
+        db.commit()
+
+        document = _export(db, tmp_path)
+        [row] = document["player_trends"]
+        assert row["hot_cold_flag"] is None
+        assert row["trend_score"] is None
+
+
+class TestTeamRosterAndOpponentRosters:
+    """apa_config.yaml's team.team_id is a real, already-configured value
+    (verified against the real database before this was built: it
+    resolves to a genuine Team row this project's own account plays on) --
+    not a fabricated "your team" concept. See ui.export_json._configured_team_id.
+
+    Rosters are built from real match-level evidence (PlayerMatch.team_id,
+    captured per match from that match's own scoresheet -- see
+    ui.export_json._match_scoped_team_ids), NOT Player.team_id/Team.players
+    -- so seeding here goes through ingest_match_scores, the same real path
+    that evidence actually comes from, rather than upsert_player(..., team),
+    which only ever sets the single, never-updated Player.team_id label.
+    """
+
+    def _export_as(self, db, tmp_path, team_id):
+        config = {
+            "export": {"json_output_path": str(tmp_path / "demo.json")},
+            "team": {"team_id": team_id},
+        }
+        export_to_json(db, config)
+        return json.loads((tmp_path / "demo.json").read_text())
+
+    def test_team_roster_lists_only_the_configured_teams_real_players(self, db, tmp_path):
+        upsert_team(db, "T1", "Mark It Up")
+        upsert_team(db, "T2", "Margin of Error")
+        ingest_match(db, match_id="M1", home_team_id="T1", away_team_id="T2",
+                     home_team_name="Mark It Up", away_team_name="Margin of Error",
+                     status="COMPLETED", home_score=18, away_score=16,
+                     is_scored=True, is_finalized=True)
+        ingest_match_scores(db, "M1", [
+            {"player_id": "P1", "player_name": "Alice", "team_id": "T1", "skill_level": 5,
+             "result": "W", "points_earned": 6},
+            {"player_id": "P2", "player_name": "Bob", "team_id": "T2", "skill_level": 4,
+             "result": "L", "points_earned": 3},
+        ])
+
+        document = self._export_as(db, tmp_path, "T1")
+        assert document["team_roster"] == [{"player": "Alice", "player_id": "P1", "skill_level": 5}]
+
+    def test_opponent_rosters_lists_every_other_real_team_per_team(self, db, tmp_path):
+        upsert_team(db, "T1", "Mark It Up")
+        upsert_team(db, "T2", "Margin of Error")
+        ingest_match(db, match_id="M1", home_team_id="T1", away_team_id="T2",
+                     home_team_name="Mark It Up", away_team_name="Margin of Error",
+                     status="COMPLETED", home_score=18, away_score=16,
+                     is_scored=True, is_finalized=True)
+        ingest_match_scores(db, "M1", [
+            {"player_id": "P2", "player_name": "Bob", "team_id": "T2",
+             "result": "L", "points_earned": 3},
+        ])
+
+        document = self._export_as(db, tmp_path, "T1")
+        assert document["opponent_rosters"] == [{
+            "team": "Margin of Error", "team_id": "T2",
+            "roster": [{"player": "Bob", "player_id": "P2", "skill_level": None}],
+        }]
+        assert "Mark It Up" not in [r["team"] for r in document["opponent_rosters"]]
+
+    def test_no_team_configured_yields_an_empty_roster_not_a_guess(self, db, tmp_path):
+        upsert_team(db, "T1", "Mark It Up")
+        document = self._export_as(db, tmp_path, "")
+        assert document["team_roster"] == []
+
+    def test_a_multi_team_player_is_attributed_to_every_real_team_they_actually_played_for(
+        self, db, tmp_path
+    ):
+        """The exact scenario Player.team_id cannot represent (see
+        ingest.backfill_player_team's own docstring): the same real player
+        plays a match for T1, then a later match for T3. Both real
+        rosters must show them -- neither is guessed, both come from real,
+        separate PlayerMatch rows."""
+        upsert_team(db, "T1", "Mark It Up")
+        upsert_team(db, "T3", "Cue the Chaos")
+
+        ingest_match(db, match_id="M1", home_team_id="T1", away_team_id="T2",
+                     home_team_name="Mark It Up", away_team_name="Margin of Error",
+                     status="COMPLETED", home_score=18, away_score=16,
+                     is_scored=True, is_finalized=True)
+        ingest_match_scores(db, "M1", [
+            {"player_id": "P1", "player_name": "Alice", "team_id": "T1", "skill_level": 5,
+             "result": "W", "points_earned": 6},
+        ])
+
+        ingest_match(db, match_id="M2", home_team_id="T3", away_team_id="T2",
+                     home_team_name="Cue the Chaos", away_team_name="Margin of Error",
+                     status="COMPLETED", home_score=18, away_score=16,
+                     is_scored=True, is_finalized=True)
+        ingest_match_scores(db, "M2", [
+            {"player_id": "P1", "player_name": "Alice", "team_id": "T3", "skill_level": 6,
+             "result": "W", "points_earned": 6},
+        ])
+
+        roster_t1 = self._export_as(db, tmp_path, "T1")["team_roster"]
+        roster_t3 = self._export_as(db, tmp_path, "T3")["team_roster"]
+        assert [r["player"] for r in roster_t1] == ["Alice"]
+        assert [r["player"] for r in roster_t3] == ["Alice"]
+
+
+class TestSchedule:
+    """Real fields only: week, date, opponent team, your player, opponent
+    player, both real skill levels, result, and match margin -- NOT racks,
+    notes, or the clutch/break-run flags an earlier draft asked for, none
+    of which are real fields (see docs/close_match_performance.md).
+
+    Which side of a head-to-head row belongs to the configured team is
+    resolved from real, match-level PlayerMatch.team_id evidence (see
+    ui.export_json._match_scoped_team_ids), not Player.team_id -- so
+    seeding here goes through ingest_match_scores for the row's own
+    player, the same real path that evidence actually comes from.
+    """
+
+    def _export_as(self, db, tmp_path, team_id):
+        config = {
+            "export": {"json_output_path": str(tmp_path / "demo.json")},
+            "team": {"team_id": team_id},
+        }
+        export_to_json(db, config)
+        return json.loads((tmp_path / "demo.json").read_text())
+
+    def test_a_real_scheduled_game_from_the_configured_teams_side(self, db, tmp_path):
+        upsert_team(db, "T1", "Mark It Up")
+        upsert_team(db, "T2", "Margin of Error")
+
+        ingest_match(db, match_id="M1", home_team_id="T1", away_team_id="T2",
+                     home_team_name="Mark It Up", away_team_name="Margin of Error",
+                     status="COMPLETED", home_score=18, away_score=16, week=3,
+                     match_date="2026-09-01", is_scored=True, is_finalized=True)
+        ingest_match_scores(db, "M1", [
+            {"player_id": "P1", "player_name": "Alice", "team_id": "T1",
+             "result": "W", "points_earned": 6},
+        ])
+        ingest_head_to_head(db, "M1", [{
+            "match_id": "M1", "player_id": "P1", "player_name": "Alice",
+            "opponent_id": "P2", "opponent_name": "Bob",
+            "own_skill_level": 5, "opponent_skill_level": 6, "result": "W",
+        }])
+
+        document = self._export_as(db, tmp_path, "T1")
+        [row] = document["schedule"]
+        assert row == {
+            "week": 3, "date": "2026-09-01", "opponent_team": "Margin of Error",
+            "your_player": "Alice", "your_player_sl": 5,
+            "opponent_player": "Bob", "opponent_player_sl": 6,
+            "result": "W", "match_margin": 2.0,
+        }
+        assert "racks" not in row
+        assert "notes" not in row
+        assert "clutch_flag" not in row
+        assert "break_run_flag" not in row
+
+    def test_no_team_configured_yields_an_empty_schedule(self, db, tmp_path):
+        upsert_team(db, "T1", "Mark It Up")
+        document = self._export_as(db, tmp_path, "")
+        assert document["schedule"] == []
+
+    def test_a_head_to_head_row_with_no_matching_scoresheet_evidence_is_excluded(
+        self, db, tmp_path
+    ):
+        """A head-to-head row exists (ingest_head_to_head ran) but the
+        matching per-match scoresheet evidence (ingest_match_scores) never
+        did for this player -- no real evidence ties them to the
+        configured team for THIS match, so the row must be excluded, not
+        guessed at from the match's own home/away ids."""
+        upsert_team(db, "T1", "Mark It Up")
+        upsert_team(db, "T2", "Margin of Error")
+        ingest_match(db, match_id="M1", home_team_id="T1", away_team_id="T2",
+                     home_team_name="Mark It Up", away_team_name="Margin of Error",
+                     status="COMPLETED", home_score=18, away_score=16, week=3,
+                     match_date="2026-09-01", is_scored=True, is_finalized=True)
+        ingest_head_to_head(db, "M1", [{
+            "match_id": "M1", "player_id": "P1", "player_name": "Alice",
+            "opponent_id": "P2", "opponent_name": "Bob",
+            "own_skill_level": 5, "opponent_skill_level": 6, "result": "W",
+        }])
+
+        document = self._export_as(db, tmp_path, "T1")
+        assert document["schedule"] == []
+
+    def test_a_multi_team_player_is_attributed_per_match_not_by_their_first_team(
+        self, db, tmp_path
+    ):
+        """The exact bug a real audit caught in a previous commit: filtering
+        on Player.team_id (a single, never-updated "first team ever seen"
+        label) would keep crediting every one of this player's later
+        matches to their OLD team. Real per-match PlayerMatch evidence
+        must decide it match by match instead."""
+        upsert_team(db, "T1", "Mark It Up")
+        upsert_team(db, "T3", "Cue the Chaos")
+
+        ingest_match(db, match_id="M1", home_team_id="T1", away_team_id="T2",
+                     home_team_name="Mark It Up", away_team_name="Margin of Error",
+                     status="COMPLETED", home_score=18, away_score=16, week=1,
+                     is_scored=True, is_finalized=True)
+        ingest_match_scores(db, "M1", [
+            {"player_id": "P1", "player_name": "Alice", "team_id": "T1",
+             "result": "W", "points_earned": 6},
+        ])
+        ingest_head_to_head(db, "M1", [{
+            "match_id": "M1", "player_id": "P1", "player_name": "Alice",
+            "opponent_id": "P2", "opponent_name": "Bob",
+            "own_skill_level": 5, "opponent_skill_level": 6, "result": "W",
+        }])
+
+        ingest_match(db, match_id="M2", home_team_id="T3", away_team_id="T2",
+                     home_team_name="Cue the Chaos", away_team_name="Margin of Error",
+                     status="COMPLETED", home_score=18, away_score=16, week=2,
+                     is_scored=True, is_finalized=True)
+        ingest_match_scores(db, "M2", [
+            {"player_id": "P1", "player_name": "Alice", "team_id": "T3",
+             "result": "L", "points_earned": 3},
+        ])
+        ingest_head_to_head(db, "M2", [{
+            "match_id": "M2", "player_id": "P1", "player_name": "Alice",
+            "opponent_id": "P2", "opponent_name": "Bob",
+            "own_skill_level": 5, "opponent_skill_level": 6, "result": "L",
+        }])
+
+        schedule_t1 = self._export_as(db, tmp_path, "T1")["schedule"]
+        schedule_t3 = self._export_as(db, tmp_path, "T3")["schedule"]
+        assert [r["week"] for r in schedule_t1] == [1]
+        assert [r["week"] for r in schedule_t3] == [2]
+
+
+class TestCloseMatchStats:
+    """Same population, same shrinkage, same close_match_band function as
+    ui.export_excel's Close_Match_Stats sheet -- see
+    analytics/close_match_performance.py."""
+
+    def test_a_real_players_shrunk_rate_and_band(self, db, tmp_path):
+        """Perfect in close matches, poor overall -- the shrunk rate should
+        land above the overall rate (real shrinkage), earning "Strong"."""
+        upsert_player(db, "P1", "Alice")
+        upsert_player(db, "P2", "Bob")
+        for i in range(3):
+            match_id = f"CLOSE{i}"
+            ingest_match(db, match_id=match_id, home_team_id="T1", away_team_id="T2",
+                         home_team_name="Home", away_team_name="Away",
+                         status="COMPLETED", home_score=18, away_score=16,
+                         is_scored=True, is_finalized=True)
+            ingest_head_to_head(db, match_id, [{
+                "match_id": match_id, "player_id": "P1", "player_name": "Alice",
+                "opponent_id": "P2", "opponent_name": "Bob",
+                "own_skill_level": 5, "opponent_skill_level": 5, "result": "W",
+            }])
+        for i in range(7):
+            match_id = f"BLOWOUT{i}"
+            ingest_match(db, match_id=match_id, home_team_id="T1", away_team_id="T2",
+                         home_team_name="Home", away_team_name="Away",
+                         status="COMPLETED", home_score=25, away_score=5,
+                         is_scored=True, is_finalized=True)
+            ingest_head_to_head(db, match_id, [{
+                "match_id": match_id, "player_id": "P1", "player_name": "Alice",
+                "opponent_id": "P2", "opponent_name": "Bob",
+                "own_skill_level": 5, "opponent_skill_level": 5, "result": "L",
+            }])
+
+        document = _export(db, tmp_path)
+        [row] = document["close_match_stats"]
+        assert row["player"] == "Alice"
+        assert row["overall_matches_played"] == 10
+        assert row["close_matches_played"] == 3
+        assert row["close_games_played"] == 3
+        assert row["close_win_rate"] == 1.0
+        assert row["overall_win_rate"] == 0.3
+        assert row["shrunk_win_rate"] > row["overall_win_rate"]
+        assert row["close_match_band"] == "Strong"
+
+    def test_a_player_never_seen_in_head_to_head_is_not_listed(self, db, tmp_path):
+        upsert_player(db, "P9", "Never Played Anyone")
+        document = _export(db, tmp_path)
+        assert document["close_match_stats"] == []
+
+
+class TestMatchupNeutralFill:
+    """P1-8: a known player with no head-to-head history against a
+    specific other known player must still show up, as a neutral 50, not
+    be silently absent."""
+
+    def _seed(self, db):
+        upsert_team(db, "T1", "Mark It Up")
+        upsert_team(db, "T2", "Rack Attack")
+        ingest_match(db, match_id="M1", home_team_id="T1", away_team_id="T2",
+                     home_team_name="Mark It Up", away_team_name="Rack Attack")
+        ingest_match(db, match_id="M2", home_team_id="T1", away_team_id="T2",
+                     home_team_name="Mark It Up", away_team_name="Rack Attack")
+
+    def test_a_pair_with_no_history_gets_a_neutral_fifty_row(self, db, tmp_path):
+        self._seed(db)
+        # Alice has played both Bob and Carol -- Bob and Carol have never
+        # played each other.
+        ingest_head_to_head(db, "M1", [
+            {"match_id": "M1", "player_id": "P1", "player_name": "Alice",
+             "opponent_id": "P2", "opponent_name": "Bob", "result": "W"},
+        ])
+        ingest_head_to_head(db, "M2", [
+            {"match_id": "M2", "player_id": "P1", "player_name": "Alice",
+             "opponent_id": "P3", "opponent_name": "Carol", "result": "L"},
+        ])
+        ingest_matchups(db, [
+            {"player_id": "P1", "opponent_id": "P2", "matches_played": 1, "win_rate": 1.0, "matchup_score": 60},
+            {"player_id": "P2", "opponent_id": "P1", "matches_played": 1, "win_rate": 0.0, "matchup_score": 40},
+            {"player_id": "P1", "opponent_id": "P3", "matches_played": 1, "win_rate": 0.0, "matchup_score": 40},
+            {"player_id": "P3", "opponent_id": "P1", "matches_played": 1, "win_rate": 1.0, "matchup_score": 60},
+        ])
+
+        document = _export(db, tmp_path)
+        pairs = {(row["player"], row["opponent"]): row for row in document["matchups"]}
+
+        assert ("Bob", "Carol") in pairs and ("Carol", "Bob") in pairs
+        assert pairs[("Bob", "Carol")]["matchup_score"] == 50
+        assert pairs[("Bob", "Carol")]["has_history"] is False
+        assert pairs[("Bob", "Carol")]["matches_played"] == 0
+        assert pairs[("Bob", "Carol")]["win_rate"] is None
+
+        # A real, computed pair must not be overridden by the fill.
+        assert pairs[("Alice", "Bob")]["has_history"] is True
+        assert pairs[("Alice", "Bob")]["matchup_score"] == 60
+
+    def test_a_roster_player_with_zero_games_gets_a_neutral_row_against_a_known_opponent(self, db, tmp_path):
+        """P1-8: subjects = roster players UNION head-to-head players. A
+        brand-new player who's on a team (a real roster slot) but hasn't
+        played a single scored game yet is still a real subject a captain
+        wants a placeholder row for against players who ARE known --
+        rather than being left off the sheet just because they have no
+        history of their own."""
+        self._seed(db)
+        ingest_head_to_head(db, "M1", [
+            {"match_id": "M1", "player_id": "P1", "player_name": "Alice",
+             "opponent_id": "P2", "opponent_name": "Bob", "result": "W"},
+        ])
+        team = upsert_team(db, "T1", "Mark It Up")
+        upsert_player(db, "P9", "Rookie Player", team)  # rostered, never played
+
+        document = _export(db, tmp_path)
+        pairs = {(row["player"], row["opponent"]): row for row in document["matchups"]}
+
+        assert ("Rookie Player", "Alice") in pairs
+        assert pairs[("Rookie Player", "Alice")]["matchup_score"] == 50
+        assert pairs[("Rookie Player", "Alice")]["has_history"] is False
+        # A roster player is a subject, not an opponent -- Bob (known only
+        # from head-to-head, no roster slot) has no reason to get a row
+        # AGAINST the rookie unless the rookie is also a known opponent.
+        assert ("Bob", "Rookie Player") not in pairs
+
+    def test_a_matchup_row_for_an_unknown_player_is_skipped_not_crashed(self, db, tmp_path):
+        """ingest_matchups() requires both Player rows to already exist --
+        this documents that an unresolvable id is dropped, not a crash."""
+        written = ingest_matchups(db, [{"player_id": "999", "opponent_id": "998", "matchup_score": 50}])
+        assert written == 0
+        document = _export(db, tmp_path)
+        assert document["matchups"] == []
+
+
+class TestLineupLegalityExport:
+    """analytics.lineup_legality's real, sourced 23-Rule check, applied
+    retroactively to ACTUAL fielded lineups from already-played matches --
+    never a hypothetical or invented lineup (see ui.export_json._lineup_legality's
+    own docstring for why there is no real "selected upcoming lineup" data
+    to check instead).
+    """
+
+    def _export(self, db, tmp_path):
+        config = {"export": {"json_output_path": str(tmp_path / "demo.json")}}
+        export_to_json(db, config)
+        return json.loads((tmp_path / "demo.json").read_text())
+
+    def test_lineup_legality_rule_is_always_present_with_the_real_sourced_constants(
+        self, db, tmp_path
+    ):
+        document = self._export(db, tmp_path)
+        assert document["lineup_legality_rule"] == {
+            "lineup_size": 5,
+            "skill_level_limit_5_player": 23,
+            "skill_level_limit_4_player": 19,
+            "source": "https://rules.poolplayers.com/general-rules/team-skill-level-limit/",
+        }
+
+    def test_a_real_five_player_lineup_at_the_cap_is_legal(self, db, tmp_path):
+        upsert_team(db, "T1", "Mark It Up")
+        ingest_match(db, match_id="M1", home_team_id="T1", away_team_id="T2",
+                     home_team_name="Mark It Up", away_team_name="Margin of Error",
+                     status="COMPLETED", home_score=18, away_score=16, week=3,
+                     is_scored=True, is_finalized=True)
+        ingest_match_scores(db, "M1", [
+            {"player_id": "P1", "player_name": "Alice", "team_id": "T1", "skill_level": 5, "result": "W"},
+            {"player_id": "P2", "player_name": "Bob", "team_id": "T1", "skill_level": 5, "result": "W"},
+            {"player_id": "P3", "player_name": "Carl", "team_id": "T1", "skill_level": 5, "result": "L"},
+            {"player_id": "P4", "player_name": "Dana", "team_id": "T1", "skill_level": 4, "result": "L"},
+            {"player_id": "P5", "player_name": "Eve", "team_id": "T1", "skill_level": 4, "result": "W"},
+        ])
+
+        document = self._export(db, tmp_path)
+        [row] = document["lineup_legality"]
+        assert row == {
+            "match_id": "M1", "week": 3, "team_id": "T1", "team_name": "Mark It Up",
+            "skill_total": 23, "limit": 23, "is_legal": True, "has_duplicate_players": False,
+        }
+
+    def test_a_real_five_player_lineup_over_the_cap_is_illegal(self, db, tmp_path):
+        upsert_team(db, "T1", "Mark It Up")
+        ingest_match(db, match_id="M1", home_team_id="T1", away_team_id="T2",
+                     home_team_name="Mark It Up", away_team_name="Margin of Error",
+                     status="COMPLETED", home_score=18, away_score=16, week=3,
+                     is_scored=True, is_finalized=True)
+        ingest_match_scores(db, "M1", [
+            {"player_id": "P1", "player_name": "Alice", "team_id": "T1", "skill_level": 5, "result": "W"},
+            {"player_id": "P2", "player_name": "Bob", "team_id": "T1", "skill_level": 5, "result": "W"},
+            {"player_id": "P3", "player_name": "Carl", "team_id": "T1", "skill_level": 5, "result": "L"},
+            {"player_id": "P4", "player_name": "Dana", "team_id": "T1", "skill_level": 5, "result": "L"},
+            {"player_id": "P5", "player_name": "Eve", "team_id": "T1", "skill_level": 4, "result": "W"},
+        ])
+
+        document = self._export(db, tmp_path)
+        [row] = document["lineup_legality"]
+        assert row["skill_total"] == 24
+        assert row["is_legal"] is False
+        assert row["has_duplicate_players"] is False
+
+    def test_a_team_with_fewer_than_five_real_rows_this_match_has_no_verdict(self, db, tmp_path):
+        """A forfeit/incomplete scoresheet or a real 4-player fallback --
+        not enough real evidence for a 5-player verdict, so no row, never
+        a guess."""
+        upsert_team(db, "T1", "Mark It Up")
+        ingest_match(db, match_id="M1", home_team_id="T1", away_team_id="T2",
+                     home_team_name="Mark It Up", away_team_name="Margin of Error",
+                     status="COMPLETED", home_score=18, away_score=16, week=3,
+                     is_scored=True, is_finalized=True)
+        ingest_match_scores(db, "M1", [
+            {"player_id": "P1", "player_name": "Alice", "team_id": "T1", "skill_level": 5, "result": "W"},
+            {"player_id": "P2", "player_name": "Bob", "team_id": "T1", "skill_level": 5, "result": "W"},
+        ])
+
+        document = self._export(db, tmp_path)
+        assert document["lineup_legality"] == []
+
+    def test_no_real_matches_yields_an_empty_list_not_a_guess(self, db, tmp_path):
+        document = self._export(db, tmp_path)
+        assert document["lineup_legality"] == []
+
+
+class TestFileIsValidJson:
+    def test_written_file_parses_and_matches_return_value(self, seeded_db, tmp_path):
+        config = {"export": {"json_output_path": str(tmp_path / "out.json")}}
+        path = export_to_json(seeded_db, config)
+        on_disk = json.loads((tmp_path / "out.json").read_text())
+        assert str(tmp_path / "out.json") == path
+        assert REQUIRED_TOP_LEVEL_KEYS.issubset(on_disk.keys())
+
+    def test_creates_parent_directory(self, seeded_db, tmp_path):
+        nested = tmp_path / "nested" / "dir"
+        config = {"export": {"json_output_path": str(nested / "out.json")}}
+        export_to_json(seeded_db, config)
+        assert (nested / "out.json").exists()

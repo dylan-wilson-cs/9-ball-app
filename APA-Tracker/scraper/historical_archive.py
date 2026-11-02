@@ -1,0 +1,364 @@
+"""Resumable league-wide historical archive builder for Ultimate Coach.
+
+Consumes a previously verified historical catalog and walks every exposed
+division through the existing division-wide ingestion pipeline. The archive is
+real-source-only: source limitations are recorded, never reconstructed.
+
+There is intentionally NO production promotion path in this module.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import shutil
+from pathlib import Path
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from analytics.matchup_builder import build_matchups
+from database.engine import create_db_engine
+from scheduler.graphql_sync import reconcile_division_wide_coverage, sync_division_wide
+from scraper.auth_classification import ConfirmedScopeDenial, call_with_confirmed_denial_retry
+
+CATALOG_SCHEMA = "ultimate-coach-historical-catalog-v1"
+CATALOG_SCHEMAS = {CATALOG_SCHEMA, "ultimate-coach-historical-catalog-v2"}
+REPORT_SCHEMA = "ultimate-coach-archive-v1"
+
+
+class ArchiveError(RuntimeError):
+    """A structural/safety error that must stop the archive crawl."""
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_catalog(path: Path) -> dict[str, Any]:
+    catalog = json.loads(path.read_text(encoding="utf-8"))
+    if catalog.get("schema") not in CATALOG_SCHEMAS:
+        raise ArchiveError(
+            f"unsupported catalog schema {catalog.get('schema')!r}; "
+            f"expected one of {sorted(CATALOG_SCHEMAS)!r}"
+        )
+    if not isinstance(catalog.get("divisions"), list):
+        raise ArchiveError("catalog divisions must be a list")
+    return catalog
+
+
+def prepare_staging(staging_db: Path, *, resume: bool, seed_db: Path | None) -> str:
+    """Prepare a separate Ultimate Coach DB without ever mutating the seed."""
+    staging_db.parent.mkdir(parents=True, exist_ok=True)
+    if resume:
+        if not staging_db.is_file():
+            raise ArchiveError(f"--resume requested but staging DB does not exist: {staging_db}")
+        return "resumed existing Ultimate Coach staging database"
+
+    if staging_db.exists():
+        staging_db.unlink()
+
+    if seed_db is not None and seed_db.is_file() and seed_db.stat().st_size:
+        shutil.copy2(seed_db, staging_db)
+        return f"seeded from {seed_db}"
+
+    return "started from an empty Ultimate Coach staging database"
+
+
+def _division_key(row: dict[str, Any]) -> str:
+    """League-aware checkpoint key.
+
+    APA ids are treated as source identifiers, not assumed globally unique
+    across leagues. Including league context prevents an unrelated league from
+    being skipped on resume if it happens to reuse a session/division number.
+    """
+    league = row.get("league_slug") or row.get("league_id") or ""
+    session = row.get("catalog_session_id") or row.get("session_id") or ""
+    division = row.get("division_id") or ""
+    return f"{league}:{session}:{division}"
+
+
+def division_plan(catalog: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return a deterministic, duplicate-free division crawl plan."""
+    planned: dict[str, dict[str, Any]] = {}
+    for row in catalog.get("divisions") or []:
+        row = dict(row or {})
+        division_id = str(row.get("division_id") or "").strip()
+        session_id = str(row.get("catalog_session_id") or row.get("session_id") or "").strip()
+        session_name = str(row.get("catalog_session_name") or row.get("session_name") or "").strip()
+        format_name = str(row.get("format") or row.get("type") or "").strip()
+        if not division_id or not session_id or not session_name or not format_name:
+            continue
+        row["division_id"] = division_id
+        row["catalog_session_id"] = session_id
+        row["catalog_session_name"] = session_name
+        row["format"] = format_name
+        planned[_division_key(row)] = row
+
+    def sort_key(item: dict[str, Any]) -> tuple[int, int]:
+        try:
+            session_n = int(item["catalog_session_id"])
+        except (TypeError, ValueError):
+            session_n = 10**12
+        try:
+            division_n = int(item["division_id"])
+        except (TypeError, ValueError):
+            division_n = 10**12
+        return (session_n, division_n)
+
+    return sorted(planned.values(), key=sort_key)
+
+
+def _checkpoint(
+    report_path: Path,
+    *,
+    status: str,
+    staging_db: Path,
+    catalog_path: Path,
+    catalog_sha256: str,
+    preparation: str,
+    completed_keys: set[str],
+    permanently_denied_keys: set[str],
+    division_results: list[dict[str, Any]],
+    catalog_source_limitations: list[str],
+    matchups_rebuilt: int | None = None,
+) -> dict[str, Any]:
+    coverage_observations = [
+        {
+            "division_id": row["division_id"],
+            "session_name": row["session_name"],
+            "observations": row["coverage_observations"],
+        }
+        for row in division_results
+        if row.get("coverage_observations")
+    ]
+    report = {
+        "schema": REPORT_SCHEMA,
+        "status": status,
+        "preparation": preparation,
+        "catalog_path": str(catalog_path),
+        "catalog_sha256": catalog_sha256,
+        "staging_db": str(staging_db),
+        # completed_division_keys is reserved EXCLUSIVELY for divisions whose
+        # sync_division_wide() call returned successfully -- never a
+        # confirmed denial. A confirmed-valid-viewer denial is tracked
+        # SEPARATELY (permanently_denied_division_keys) and is never counted
+        # as "crawled"/"complete": sync_division_wide's own ingest helpers
+        # (upsert_team/upsert_player/ingest_match/...) commit internally as
+        # they go, so a denial reached partway through a division can leave
+        # real, durable, PARTIAL rows behind even though the division itself
+        # never finished. Conflating the two would let that partial data
+        # masquerade as complete coverage for this division.
+        "completed_division_keys": sorted(completed_keys),
+        "permanently_denied_division_keys": sorted(permanently_denied_keys),
+        "divisions_crawled": len(completed_keys),
+        "divisions_permanently_denied": len(permanently_denied_keys),
+        "division_results": division_results,
+        "catalog_source_limitations": catalog_source_limitations,
+        "coverage_observations": coverage_observations,
+        "matchups_rebuilt": matchups_rebuilt,
+    }
+    if staging_db.is_file():
+        report["staging_sha256"] = sha256_file(staging_db)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    return report
+
+
+def run_archive(
+    config: dict,
+    *,
+    catalog_path: Path,
+    staging_db: Path,
+    report_path: Path,
+    seed_db: Path | None = None,
+    resume: bool = False,
+) -> dict[str, Any]:
+    """Crawl every valid catalog division into the separate staging DB.
+
+    A division is marked completed after its full sync call returns, even if APA
+    reports irreducible missing historical rows. Those observations remain in
+    the report but are not fabricated or retried forever. If auth expires
+    during a division, that division is not checkpointed and a resume safely
+    revisits it with sync_division_wide(resume=True).
+    """
+    catalog = load_catalog(catalog_path)
+    catalog_sha = sha256_file(catalog_path)
+    preparation = prepare_staging(staging_db, resume=resume, seed_db=seed_db)
+
+    completed_keys: set[str] = set()
+    permanently_denied_keys: set[str] = set()
+    division_results: list[dict[str, Any]] = []
+
+    if resume and report_path.is_file():
+        previous = json.loads(report_path.read_text(encoding="utf-8"))
+        previous_sha = previous.get("catalog_sha256")
+        if previous_sha and previous_sha != catalog_sha:
+            raise ArchiveError(
+                "catalog changed since the prior archive run; refusing to reuse completed checkpoints"
+            )
+        completed_keys = set(previous.get("completed_division_keys") or [])
+        permanently_denied_keys = set(previous.get("permanently_denied_division_keys") or [])
+        division_results = list(previous.get("division_results") or [])
+
+        # A completed archive with an unchanged catalog and byte-identical
+        # staging database is already finalized. Returning the verified
+        # checkpoint here is critical for auth-refresh resume: otherwise every
+        # fresh token re-enters Stage 3, skips all completed divisions, then
+        # needlessly rebuilds the entire matchup table before Stage 4 can make
+        # its first authenticated request. On a large archive that local
+        # rebuild can consume the token's useful lifetime and create a
+        # self-sustaining Stage-3/reauth loop.
+        planned_keys = {_division_key(row) for row in division_plan(catalog)}
+        accounted_keys = completed_keys | permanently_denied_keys
+        recorded_staging_sha = str(previous.get("staging_sha256") or "")
+        staging_unchanged = bool(
+            recorded_staging_sha
+            and staging_db.is_file()
+            and sha256_file(staging_db) == recorded_staging_sha
+        )
+        if (
+            previous.get("status") == "crawl_complete"
+            and accounted_keys == planned_keys
+            and previous.get("matchups_rebuilt") is not None
+            and staging_unchanged
+        ):
+            return previous
+
+    run_config = dict(config)
+    run_config["database"] = dict(config.get("database") or {})
+    run_config["database"]["path"] = str(staging_db)
+
+    engine = create_db_engine(run_config)
+    try:
+        with Session(engine) as db:
+            for division in division_plan(catalog):
+                key = _division_key(division)
+                if key in completed_keys or key in permanently_denied_keys:
+                    continue
+
+                division_id = division["division_id"]
+                session_id = division["catalog_session_id"]
+                session_name = division["catalog_session_name"]
+                format_name = division["format"]
+                current_session_id = str(division.get("current_session_id") or "")
+                is_current = bool(current_session_id and current_session_id == session_id)
+
+                try:
+                    counts = call_with_confirmed_denial_retry(
+                        run_config,
+                        lambda: sync_division_wide(
+                            run_config,
+                            db,
+                            division_id,
+                            format_name,
+                            session_name,
+                            resume=True,
+                            roster_is_current=is_current,
+                            identity_current_only=is_current,
+                        ),
+                    )
+                except ConfirmedScopeDenial as denial:
+                    # A division discovered through another roster member's
+                    # own cross-league history can be genuinely, permanently
+                    # inaccessible to THIS viewer even though the viewer's
+                    # own token is otherwise completely valid. Without this,
+                    # sync_division_wide's own bare re-raise (shared,
+                    # already-audited code used by other, unrelated sync
+                    # paths -- intentionally not modified here) would make
+                    # the outer runner treat this as a full auth expiry
+                    # forever, forcing endless reauthentication with zero
+                    # forward progress.
+                    #
+                    # IMPORTANT: sync_division_wide's own ingest helpers
+                    # (upsert_team/upsert_player/ingest_match/...) commit
+                    # internally as they go -- db.rollback() here CANNOT
+                    # undo rows already committed by an earlier part of this
+                    # same (twice-failed) call. This division is therefore
+                    # NEVER added to completed_keys: it is tracked in the
+                    # SEPARATE permanently_denied_keys set instead, so any
+                    # real partial rows this division may have left behind
+                    # are never mistaken for complete coverage, while the
+                    # crawl still stops retrying it (no infinite reauth
+                    # loop). db.rollback() is still called to end this
+                    # attempt's transaction cleanly for the next division.
+                    db.rollback()
+                    result = {
+                        "division_id": division_id,
+                        "session_id": session_id,
+                        "session_name": session_name,
+                        "format": format_name,
+                        "is_current_session": is_current,
+                        "confirmed_denial": True,
+                        "data_completeness": "partial_or_none_unreliable",
+                        "coverage_observations": [
+                            f"APA denied this division twice with a confirmed-valid viewer "
+                            f"token ({denial}). Any rows already committed for this division "
+                            f"before the denial are real but PARTIAL -- this division's "
+                            f"coverage must never be treated as complete."
+                        ],
+                    }
+                    division_results.append(result)
+                    permanently_denied_keys.add(key)
+                    _checkpoint(
+                        report_path,
+                        status="crawl_in_progress",
+                        staging_db=staging_db,
+                        catalog_path=catalog_path,
+                        catalog_sha256=catalog_sha,
+                        preparation=preparation,
+                        completed_keys=completed_keys,
+                        permanently_denied_keys=permanently_denied_keys,
+                        division_results=division_results,
+                        catalog_source_limitations=list(catalog.get("source_limitations") or []),
+                    )
+                    continue
+
+                db.commit()
+                observations = reconcile_division_wide_coverage(counts)
+                result = {
+                    "division_id": division_id,
+                    "session_id": session_id,
+                    "session_name": session_name,
+                    "format": format_name,
+                    "is_current_session": is_current,
+                    "coverage_observations": observations,
+                    **counts,
+                }
+                division_results.append(result)
+                completed_keys.add(key)
+                _checkpoint(
+                    report_path,
+                    status="crawl_in_progress",
+                    staging_db=staging_db,
+                    catalog_path=catalog_path,
+                    catalog_sha256=catalog_sha,
+                    preparation=preparation,
+                    completed_keys=completed_keys,
+                    permanently_denied_keys=permanently_denied_keys,
+                    division_results=division_results,
+                    catalog_source_limitations=list(catalog.get("source_limitations") or []),
+                )
+
+            matchup_rows = build_matchups(db)
+            db.commit()
+
+        return _checkpoint(
+            report_path,
+            status="crawl_complete",
+            staging_db=staging_db,
+            catalog_path=catalog_path,
+            catalog_sha256=catalog_sha,
+            preparation=preparation,
+            completed_keys=completed_keys,
+            permanently_denied_keys=permanently_denied_keys,
+            division_results=division_results,
+            catalog_source_limitations=list(catalog.get("source_limitations") or []),
+            matchups_rebuilt=len(matchup_rows),
+        )
+    finally:
+        engine.dispose()

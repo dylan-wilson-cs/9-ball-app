@@ -1,0 +1,537 @@
+# APA Tracker Scorekeeper
+
+Personal tool for tracking your APA (pool league) team's standings, rosters,
+and player stats by scraping your local league's web portal, storing the
+results in a small SQLite database, and exporting summaries to Excel.
+
+## Layout
+
+- `auth/` — logs into the league portal and caches the session so the
+  scheduler jobs don't have to re-authenticate every run.
+- `scraper/` — pulls standings, team roster/schedule, and player match
+  history pages.
+- `parser/` — turns scraped HTML into plain dicts. `apa_page_map.py` is the
+  one place that knows the site's CSS selectors — update it there if the
+  portal's markup changes, rather than in each scraper.
+- `database/` — SQLAlchemy models plus ingest/query helpers backed by SQLite.
+- `analytics/` — derived stats: win %, standings trend, skill level
+  trend/volatility (`skill_level_trends.py`), and two distinct matchup
+  tools -- `matchup_insights.py` (older, simpler: compares two players'
+  own overall win %, not specific to each other) and `matchups.py`, the
+  Matchup Advantage Engine (real head-to-head record against one specific
+  opponent -- see docs/matchups.md), plus the Captain's Edge decision and
+  one-to-one Lineup Optimizer (`lineup_optimizer.py`).
+- `scheduler/` — the two jobs meant to actually run on a schedule
+  (`daily_sync.py`, `weekly_refresh.py`).
+- `ui/` — Excel (`export_excel.py`) and JSON (`export_json.py`) exports plus
+  self-contained analysis tabs.
+  `dashboard_stub.py` marks where a real *interactive* (Streamlit/Flask)
+  dashboard would go later — separate from the static demo page below.
+- `scripts/` — offline, fixture-driven demo build: `build_demo.py` runs the
+  real ingestion pipeline against `tests/fixtures/*.json` (no network, no
+  login) and `render_demo_html.py` turns that into a browsable
+  `exports/demo_dashboard.html`. See `docs/graphql-captures/*/HANDOFF.md`
+  for how it's wired.
+
+## Setup
+
+**Requires Python 3.12 or 3.13, NOT 3.14.** Python 3.14.3 on Windows has a
+confirmed bug where `asyncio.run()` crashes the entire process with zero
+output and no traceback -- not catchable by any `try/except`, since it
+happens below where Python's own exception handling runs at all. Confirmed
+directly: `scraper/diagnose_eventloop.py` isolates it down to the exact
+call (a bare, do-nothing coroutine passed to `asyncio.run()`) and reproduces
+it every time on 3.14.3, while the identical script completes cleanly under
+3.12.10 on the same machine. This breaks `scraper/full_apa_scrape.py` and
+`scraper/capture_apa_graphql.py` (anything using Playwright's async API)
+outright, since Playwright's driver never even starts.
+
+If `py -0` shows only 3.14 installed, get 3.12 with `winget install
+Python.Python.3.12` (or the installer from python.org), then create the
+venv from that version specifically: `py -3.12 -m venv venv`.
+
+1. Install dependencies (fully pinned -- see
+   [docs/reproducible_builds.md](docs/reproducible_builds.md) for how these
+   are generated and verified, and `playwright install chromium` for the
+   scraper's actual browser binary):
+
+   ```
+   pip install -r requirements-dev.txt
+   ```
+
+2. Copy `.env.example` to `.env` and fill in your league portal login:
+
+   ```
+   APA_USERNAME=your_username
+   APA_PASSWORD=your_password
+   ```
+
+   Credentials are read from the environment only — never put them in
+   `apa_config.yaml` or commit them.
+
+3. Edit `apa_config.yaml`:
+   - `site.base_url` and the `*_path` / `*_path_template` fields — point
+     these at your actual league portal (they're placeholders right now).
+   - `league.league_id`, `team.team_id`, `team.team_name`.
+   - `apa.league_id` and `apa.division_id` for GraphQL metadata.
+   - `database.path` / `export.excel_output_path` if you want them
+     somewhere other than `data/` and `exports/`.
+
+4. **Inspect the real site's HTML** and update `parser/apa_page_map.py`
+   accordingly. The selectors in there (`table.standings`, `table.roster`,
+   etc.) are placeholders — nothing will parse correctly until they match
+   what the portal actually renders. Same goes for the success markers in
+   `auth/login.py::is_logged_in` and the login form field names.
+
+## Running it
+
+```
+python -m scheduler.daily_sync      # standings + roster + new match results
+python -m scheduler.weekly_refresh  # full refresh + Excel export
+```
+
+Wire either of those into Windows Task Scheduler (or cron, if running under
+WSL) at the times set in `apa_config.yaml`'s `scheduler` section.
+
+### Live GraphQL team data
+
+The APA Teams page is a client-side app talking to a GraphQL endpoint — there
+is no server-rendered HTML behind it to scrape, so team/roster/schedule data
+is only reachable this way.
+
+**1. Set the access token for this shell only.** It is short-lived, and it
+must never be saved to `apa_config.yaml`, a script, a HAR file, or source
+control:
+
+```powershell
+$env:APA_ACCESS_TOKEN = "<access token from your current APA session>"
+```
+
+**2. Run the sync.** By default this discovers and syncs *every team the
+account plays on* -- no `team.team_id`/`division_id` config needed -- and
+for each one: the team itself, its roster, every match (schedule and
+score), the division standings, and a full per-player scoresheet for every
+match that's actually been played. All of it writes to SQLite; the Excel
+workbook and a JSON export refresh afterward:
+
+```powershell
+python -m scheduler.graphql_sync                 # every team, sync + Excel export
+python -m scheduler.graphql_sync --no-export      # every team, sync only
+python -m scheduler.graphql_sync --single-team    # only apa_config.yaml's team.team_id (the original, narrower path)
+```
+
+No page needs clicking through for any of this -- it's direct API calls
+once the token above is set. If the token has expired (they don't last
+long) the run stops with a message saying exactly that, rather than a
+traceback; get a fresh one and set the env var again.
+
+Player *career* stats (lifetime record per format, plus cross-season team
+history — "how has this player done across seasons," not just this match)
+are included too: the sync resolves the account's own member id to its
+per-league alias id and pulls both, landing in the "Career Stats" and
+"Team History" Excel sheets and the demo's Career tab. See
+`docs/graphql-captures/*/HANDOFF.md` item 2 for how the alias id was found
+and what's still unconfirmed (opponents' career stats aren't pulled this
+way, and the alias-per-league mapping is only confirmed against one league
+on a multi-league account). "Career Stats" also carries lifetime on-break/
+break-and-run/mini-slam counts (plus 8-ball-only "rackless" and 9-ball-only
+"skunks") from the same query's per-session `players` list, summed across
+sessions; per-match on-break/break-and-run counts (from `MATCH_DETAIL_QUERY`
+scoresheet rows, not `getEightBallStats`) are summed per player into new
+"Player Stats" columns the same way wins/losses already are.
+
+**Skill level history** — APA skill levels get re-evaluated and can change
+mid-season, and a player who moved that way shows up as a mystery jump in
+other stats unless the change itself is visible. This isn't a new query or
+extraction step: `ingest_match_roster`/`ingest_match_scores` already write
+`PlayerMatch.skill_level` for every scored match; `database.queries.skill_level_history`
+just reads that column back out match-by-match instead of only the single
+current value on `Player.skill_level`. `analytics/skill_level_trends.py`
+turns a player's ordered readings into a trend (`up`/`down`/`stable`,
+comparing the first and last reading of the season — a dip that fully
+recovers reads `stable`), a volatility count (how many times it actually
+changed), and a plain-language last change (`"SL 5 → SL 6 in Week 7"`). It
+lands in the Excel "Skill Level History" sheet, the JSON export's
+`skill_level_history`/`skill_level_summary` keys, and the demo's own
+"Skill Level" tab (a table plus a small inline-SVG trend line per player —
+no charting library, matching the rest of the demo). Readings are kept
+match-by-match rather than deduplicated to one per week: a player can have
+more than one match in the same week number (a doubleheader, a makeup
+match), and collapsing them would silently discard a real reading.
+
+**Matchup Advantage Engine** — a per-opponent read for a captain setting a
+lineup: real head-to-head record, not a season-wide average, plus a 0-100
+`matchup_score`. Also not a new query: `MatchPage`'s per-game
+`matchPositionNumber` already tells you which home player played which
+away player (same-numbered positions face each other in APA team format);
+`scraper/graphql_scraper.py::head_to_head_rows()` pairs them, and
+`analytics/matchup_builder.py::build_matchups()` scores every (player,
+opponent, format, session) group found so far -- an 8-ball record doesn't
+predict a 9-ball one, and a stale session's record isn't current form
+(both threaded in from the team's own context, not a new query). Called
+directly by the real sync and the demo build, not a separate manual step;
+`scripts/build_matchups.py` is a thin CLI wrapper for recomputing on
+demand. The score is sample-size-weighted (a 1-0 record no longer scores
+like a 10-0 one), recency-weighted (a recent game counts slightly more
+than an old one), and includes an opponent-skill-level modifier (a bonus
+for wins against tougher opponents) — plus a separate `Confidence Score`
+saying how much to trust the matchup score itself, and an `SL Delta`
+column giving the unweighted average skill-gap across ALL games in the
+pairing (wins and losses alike) as descriptive context alongside the
+score, not folded into it. A corrected scoresheet
+reconciles cleanly (stale pairings are removed, not left alongside
+corrected ones), results are normalized so a malformed value never counts
+as a silent loss, and a known player with no history against a specific
+known opponent shows up as a neutral 50/"Has History: No" row instead of
+being silently absent. Lands in the Excel "Matchups" sheet, the JSON
+export's `matchups` key, and the demo's "Matchups" tab (recommended
+opponents / opponents to be cautious of, per player). Full write-up,
+including the score formula and what it deliberately leaves out,
+in `docs/matchups.md`.
+
+**Lineup Optimizer** — converts independent Captain's Edge picks into a legal
+whole-lineup assignment. `analytics/lineup_optimizer.py` evaluates every
+one-to-one player/opponent assignment exactly, then applies risk, confidence,
+and deterministic tie-breaks. `scripts/build_lineups.py` reads the persisted
+Head-to-Head Advantage and Player Trend rows read-only, keeps missing evidence
+as `null`, and atomically rewrites `exports/lineups.json`. It runs
+automatically from `python -m pipeline` after the other captain-facing
+exports; the same JSON is rendered in the analysis page and a `Lineup
+Optimizer` Excel sheet. Team identity is resolved by ID first and by an
+unambiguous player name only when the upstream ID spaces do not join;
+unresolved rows are
+reported rather than mixed into an invented opponent bucket. See
+`docs/lineup_optimizer.md` for the payload contract and limitations, and
+`docs/prediction_validation.md` for how well its `win_probability` input
+actually predicts real recorded outcomes (run
+`python scripts/validate_predictions.py` to refresh it against the current
+database).
+
+**Where every column comes from** — `docs/data-fields.md` is the single
+source of truth for which exported columns are raw API values, which are
+computed here, and which fields were explicitly checked and found to not
+exist anywhere in the real API (so they're never fabricated).
+
+#### Capturing queries by logging in (easiest)
+
+`tools/capture_apa_graphql.py` opens a browser, you log in by hand, and it
+records every GraphQL call the site makes while you browse. One-time setup:
+
+```powershell
+pip install playwright
+python -m playwright install chromium
+```
+
+Then:
+
+```powershell
+python tools/capture_apa_graphql.py           # capture only
+python tools/capture_apa_graphql.py --sync    # capture, then sync immediately
+```
+
+`--sync` reuses the session you just opened, so there is no token to copy
+anywhere. The token is held in memory for that run only — never written to
+disk, never printed.
+
+It writes two files, both gitignored:
+
+| File | Contains | Share it? |
+|---|---|---|
+| `apa-capture-shapes.json` | Field names and **types** only — every name, id and score replaced by `str`/`int`/`float`. Enum values like `COMPLETED` are kept. | **Yes** — it's the schema, with no data in it |
+| `apa-capture-full.json` | The real responses, for building local fixtures | **No** — has teammates' names |
+
+The script never sees your password: you type it into the real APA login page
+in the browser window it opens.
+
+#### Capturing a new query from a HAR file (alternative)
+
+Only `teamPage`, `teamRoster` and `teamSchedule` have been captured. The
+division standings table needs `LeagueBox`, which hasn't been — see the
+bottom of `parser/apa_graphql.py`. To capture one:
+
+1. Log into APA in Chrome and open the page that shows the data you want.
+2. DevTools → Network → Fetch/XHR, then reload the page.
+3. Right-click the request list → *Save all as HAR with content*, saving to
+   `%USERPROFILE%\Desktop\apa-network.har`.
+4. Run the extractor:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File ".\tools\export-apa-graphql.ps1"
+   ```
+
+That writes `apa-graphql-requests.json` with only the operation names,
+variables, queries and **response bodies** — no headers, cookies or tokens,
+so the token never leaves your machine. The response bodies can still contain
+teammates' names, so skim the file before sharing it with anyone.
+
+A HAR captured on one page only contains the queries that page issued: if an
+operation comes back missing, visit the page that loads it and capture again.
+
+## Coach Advantage Tools ("Coach's Weapon")
+
+Existing REPORTER modules and one builder turn the already-validated analytics
+into a coach-facing Player vs Player comparison, Team vs Team comparison,
+Data Coverage/Freshness view, Match Night planner, and one combined static
+Coach Cockpit:
+
+- `analytics/player_matchup_engine.py` — one real (player, opponent)
+  pairing's evidence (DIRECT record with the exact win/loss count, or the
+  validated skill-only estimate, never both blended), each side's real
+  skill-level trend series (`analytics/skill_level_trends.py`), and a
+  strictly descriptive summary.
+- `analytics/team_matchup_engine.py` — one real scheduled match's roster
+  comparison, per-opponent-player ranking (mirrors
+  `analytics/opponent_risk_profile.py`'s own whole-division convention at
+  player granularity), the true pooled DIRECT win/loss record across every
+  one of our players who has faced an opponent, and the embedded
+  `analytics/lineup_lab.py` approved lineup.
+- `analytics/data_coverage.py` — the existing factual coverage reporter:
+  DIRECT/INDIRECT/UNKNOWN counts, missing posted skill levels, sample sizes,
+  real standings/career refresh timestamps, and explicit unavailable-data
+  disclosures. It does not invent a fresh/stale threshold.
+- `scripts/build_coach_advantage_bundle.py` — the builder: real scope
+  discovery via `scripts/build_captain_first_edge.py`, then the existing
+  matchup engines and Data Coverage report, HTML/Excel/JSON, and
+  `ui/coach_cockpit.py`'s one-stop composition of the audited
+  `ui/dashboard.py` page plus `ui/tabs/data_coverage.py`, finished with a
+  manifest, checksums, and a `READY` marker (same discipline as
+  `scripts/build_full_production_demo.py`). Never scrapes -- read-only
+  against whatever database you point it at:
+
+  ```powershell
+  python scripts/build_coach_advantage_bundle.py --db data/apa_tracker.db --our-team-id 13082948
+  ```
+
+**Coach Dashboard / Cockpit features:**
+
+- **Player → opposing team → opponent selectors** — choose one of your
+  players, then the opposing team/scope, then that team's player. The final
+  card shows the exact DIRECT head-to-head W-L record, observed win rate, and
+  recorded direct-match sample when real history exists; otherwise it states
+  **No direct history** and keeps the existing skill-only estimate separate.
+  Opposing-team labels include format/session context, so the selector never
+  silently mixes players from another matchup scope.
+- **Skill-level trend sparklines** — a real inline SVG polyline plotted
+  from each player's whole chronological skill-level series
+  (`SkillTrendInfo.readings`), next to the existing direction + volatility
+  indicator, with a real reading-count/date-range caption (and an SVG
+  `<title>` tooltip) alongside it. A player with fewer than two readings
+  shows the text indicator alone; there is nothing to plot, and that is
+  shown honestly. The chart is independently scaled per player, not
+  against a shared skill-level domain — this project has no established
+  real bound to plot against instead, so the caption is the honest
+  disclosure rather than a fabricated shared axis.
+- **Opponent filters** — skill level range, minimum volatility, and trend
+  direction, narrowing the opponent list to only real opponents matching
+  the real, already-computed fields on their own report. No new threshold
+  or model backs a filter.
+- **Captain's Edge card** — one real scope's evidence coverage, lineup
+  fill status, and the lowest/highest experimental skill-only estimate
+  already in the ranked table below it — purely descriptive, never
+  narrated as a "favored"/"danger" verdict.
+- **Data Coverage & Freshness** — the same already-validated Data Coverage
+  report is now embedded in the one-stop cockpit for each real matchup
+  scope: evidence counts, missing posted skill levels, sample sizes, real
+  refresh timestamps, and unavailable fields. The UI shows those facts as
+  captured and does not invent an age cutoff or a fresh/stale verdict.
+- **Lineup context** — the approved lineup table shows each board's real
+  lineup score next to its real score basis
+  (`LineupSlot.lineup_score_source` — always the validated skill-only
+  score; `analytics.lineup_lab.pairing_score()` deliberately never lets
+  DIRECT history influence lineup selection), plus the pairing's own
+  direct evidence (observed rate, count, and `model_source`) shown
+  separately so the two are never conflated, and any unassigned
+  players/opponents or a real blocked reason.
+
+**Deliberately excluded, by design, not by omission:** a new
+win-probability/confidence model, categorical "danger player" flags, and
+"Player A is favored because…" verdicts. `docs/captain_first_edge_experience.md`
+§13 documents, by name, the modules this project has had to fail-close for
+exactly that pattern (invented, unfitted thresholds presented as advice).
+Every number here traces to real DIRECT history (exact win/loss counts,
+counted once from the authoritative match rows, never reconstructed from
+a rounded rate) or the skill-only estimate already validated against 106
+recorded outcomes (`docs/prediction_validation.md`); rankings are purely
+descriptive, sorted by that real signal, never labeled. Adding a genuinely
+validated win-probability model or danger threshold is real, separate
+statistical work — checked against this project's own recorded outcomes
+before it ships, not asserted in the code.
+
+**Game-night one-click launcher** — on Windows, double-click
+`Refresh_APA_Cockpit.bat`. It selects a supported Python 3.12/3.13
+interpreter, opens the real APA site so you can log in normally, keeps the
+captured access token in memory only, performs the existing division-wide live
+staging refresh, refuses incomplete coverage, then discovers every current
+league team owned by the logged-in viewer. It builds and independently verifies
+one Coach Cockpit per owned team from the exact same staged database, chooses
+the team with the nearest upcoming unplayed real match as the default, and
+opens a small **My Team** selector shell above those verified Cockpits. Changing
+that selector switches team views without recomputing analytics or mixing one
+team's Match Night state into another. Duplicate team names are disambiguated
+with format/session/team id. Pass `--our-team-id TEAM_ID` only when you
+intentionally want the original single-team build instead of the multi-team
+selector. Promotion remains blocked until every child Cockpit and the selector
+hub revalidate against the same staging DB hash. A failure before promotion
+leaves the current production database untouched, and every build uses a new
+run directory so the previous known-good Cockpit is not overwritten. The
+equivalent token-already-available CLI is:
+
+```powershell
+python scripts/run_game_night.py
+```
+
+Use `--resume` only to continue an interrupted staging refresh with a fresh
+session token; use `--no-open` to verify/build without launching the browser.
+
+**Match Night** — the dashboard's third panel, for the actual in-match
+decision: "they put up this player, who should I send, and what does that
+leave me?" Reuses the exact same Player vs Player / Team vs Team data
+already embedded on the page — no new estimate, no new model.
+
+- **Match setup** — pick the (opponent, format, session) scope, then the
+  real scheduled match itself: `analytics.team_matchup_engine.RealScheduledMatch`
+  carries each scope's real underlying `Match` row(s) (own `external_id` +
+  `match_date`), since the same two teams can legitimately play more than
+  once under one scope in a season. Saved state (availability, boards sent)
+  is keyed by the selected real match, not just the scope, so two matches
+  against a repeat opponent never inherit each other's lineup. Which
+  scope+match is *active* is itself persisted separately from each
+  match's own state, so a page reload restores the coach's real selection
+  instead of silently snapping back to the first option. A "Bundle
+  generated" line shows the real export timestamp — explicitly not a
+  claim about when the underlying data was last synced. The embedded Data
+  Coverage section separately shows the real refresh signals the project
+  actually has rather than relabeling build time as source-data freshness.
+- **Roster availability** — mark each of tonight's players Available,
+  Absent, Already played, or Held back — four genuinely distinct states,
+  never conflated. Nothing computed elsewhere treats an unmarked player as
+  available by default beyond the honest "Available" starting state.
+- **Side-by-side comparison** — pick who the opponent announced, and every
+  currently-Available player gets a card: skill levels, exact DIRECT
+  win/loss record and its real sample size, a modeled probability labeled
+  in plain language (with the real technical model string one click away
+  in an expandable `<details>`, never hidden — just not the headline), and
+  the same plain-language summary `analytics.player_matchup_engine`
+  already generates — never a "favored" verdict.
+- **A concrete remaining plan** — each candidate's card doesn't just say
+  "still legal": it names one real, valid completion (which specific
+  teammates and their skill levels would finish a legal lineup), or states
+  plainly that no combination of tonight's remaining Available players
+  keeps the team under the real 23-Rule cap. Backed by a real, bounded
+  exact search (`analytics.lineup_legality.legal_completion_exists`, ported
+  to JS since this planner is live/interactive, not a build-time report).
+  The normal 5-player / 23 path is preferred whenever it is provably legal.
+  Only when that path is proven impossible can the verified 4-player / 19
+  fallback be surfaced; using it requires forfeiting match 5. Unknown skill
+  levels never force a fallback or forfeit recommendation, and an exact
+  search that exceeds its configured bound fails closed instead of silently
+  approximating.
+- **Fast corrections** — every sent board has its own Undo: removes the
+  recorded assignment, restores that player's own availability, and frees
+  the opponent back into the announce dropdown, all three kept consistent
+  with the saved state and the print view. A manual status change away from
+  "Already played" retracts a stale Send record the same way, so the two
+  can never quietly disagree (the real bug a GPT audit caught and this
+  fixes).
+- **Phone-first presentation** — large controls and touch targets (44px
+  minimum) throughout, a sticky remaining-slots/skill-total summary that
+  stays visible while scrolling through comparison cards, decision cards
+  ahead of the detailed boards-sent log. A basic print view (`Print
+  summary`) renders just the roster status and boards sent, usable offline.
+
+### Match Night Scouting
+
+Its own real `<h2>` section within Match Night — the same visual weight as
+Player vs Player/Team vs Team/Data Coverage above it, not a small card
+buried inside another section — appearing the moment an opponent is
+announced, before the "who should I send" comparison cards:
+
+- **Exact head-to-head W-L, with sample size** — against every
+  currently-Available teammate (Absent/Held-back/Already-played
+  excluded), pulled from the same `PlayerMatchupReport` data the
+  comparison cards already use.
+- **Recent recorded results, dated, window stated** — the real dated list
+  of individual recorded games behind that pooled record
+  (`analytics.pairing_evidence.HeadToHeadGame`, the same authoritative
+  rows the win/loss count is already counted from — itemized, not
+  reconstructed), under an explicit "Window: {format}, {session}" line.
+  A missing or zero-game history reads as "No recorded meetings", never a
+  guessed 0-0 or an inferred loss/streak — this project tracks no such
+  streak separate from this real evidence, and never will by inventing
+  one here.
+- **Plain-English limitations** — a fixed disclosure that an estimate
+  without direct history uses skill levels only, and that a missing or
+  small sample is shown exactly as that.
+- **Coach Observations** — the coach's own notes, clearly labeled and
+  visually separate from every calculated field on the card, saved to the
+  browser's `localStorage` by the opponent's real player identity (not by
+  match or scope), so a note about a real person survives across every
+  future match they're announced in.
+- **Phone-readable** — verified with a real 390px-viewport browser test
+  (not just CSS asserted and trusted): no horizontal page scroll, and
+  every Match Night control meets a real 44px touch-target minimum.
+
+**Regression coverage:** `tests/test_dashboard_browser.py` drives a real
+headless Chromium instance (Playwright) against a real, freshly built
+bundle's `dashboard.html` — picking players, narrowing opponents, applying
+and clearing filters, switching real team scopes, marking players
+absent/held back, sending a player and checking the resulting board/status,
+confirming a legality-breaking send triggers a real confirm() dialog, and
+checking for JavaScript errors throughout — so the dashboard's actual
+browser behavior is regression-tested, not just the HTML/JSON it renders.
+The post-v1.0 Coach Cockpit integration adds a separate real 390px Chromium
+regression that expands Data Coverage and verifies any wide table scroll is
+contained locally instead of widening the whole page.
+
+Still open, honestly disclosed: a genuine per-player match win/loss streak
+separate from skill-level trend is not currently persisted by the validated
+evidence layer. It remains separate evidence-layer work, not something the
+cockpit infers from incomplete data.
+
+## Notes
+
+- This only scrapes pages behind your own login for your own team/league —
+  it's not meant to hit the portal anonymously or at any volume beyond what
+  a normal logged-in user would generate. Keep the daily/weekly cadence;
+  don't tighten it into a polling loop.
+- The session cookie cache (`.session_cache/`) and `.env` both belong in
+  `.gitignore` — they contain live credentials/session state.
+
+## Collaboration
+
+This project uses a builder/auditor handshake between GPT/Jeeves and Claude.
+See [docs/gpt_claude_handshake.md](docs/gpt_claude_handshake.md) for details.
+
+
+## One-time career-history backfill
+
+The normal game-night refresh is intentionally optimized for current teams and
+current divisions. To build the permanent career archive, run the dedicated
+backfill against a fresh APA access token:
+
+```powershell
+python scripts/backfill_career_history.py
+```
+
+The command discovers every per-league alias on the logged-in member, paginates
+all TeamStat past teams, walks each distinct historical division, ingests its
+rosters/schedules/finalized scoresheets, and rebuilds player-vs-player matchup
+history. It stages into `data/apa_tracker_career_staging.db` and writes
+`data/apa_tracker_career_backfill_report.json`. It does **not** replace
+production unless `--promote` is explicitly supplied and the report has zero
+coverage gaps.
+
+If the short-lived APA token expires during the initial career crawl, capture a
+fresh token and continue with:
+
+```powershell
+python scripts/backfill_career_history.py --resume
+```
+
+Historical roster memberships are stored with `is_current=False`; current
+captain views continue to require a real current membership. Once the complete
+career staging database is independently verified and promoted, ordinary
+game-night refreshes seed staging from that career-complete production database
+and apply current changes incrementally. Already-captured scoresheets are
+skipped, so future refreshes preserve years of history instead of rebuilding or
+discarding it.

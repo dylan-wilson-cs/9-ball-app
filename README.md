@@ -36,3 +36,37 @@ npm run build
 You can preview the production build with `npm run preview`.
 
 > To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+
+## APA-Tracker (vendored)
+
+`APA-Tracker/` is a vendored copy of
+[ssands5-cloud/APA-Tracker](https://github.com/ssands5-cloud/APA-Tracker), a
+Python tool that pulls APA league standings, rosters, and match history into
+SQLite and builds Excel exports and static coach dashboards. See
+`APA-Tracker/UPSTREAM.md` for the pinned upstream commit and
+`APA-Tracker/README.md` for its own documentation.
+
+It is independent of the SvelteKit app above: Python 3.12/3.13, Playwright,
+and pytest, no Node involvement.
+
+### Remote (Claude Code cloud) setup
+
+```bash
+bash APA-Tracker/setup_remote.sh
+```
+
+The script creates `APA-Tracker/.venv`, installs the pinned lock
+(`requirements-dev.txt`), and makes a Chromium build available to Playwright.
+When the environment's network policy blocks `cdn.playwright.dev`, it maps the
+container's preinstalled Chromium onto the expected revision in
+`APA-Tracker/.pw-browsers` and tells you to export `PLAYWRIGHT_BROWSERS_PATH`.
+
+To run it automatically for every new session, add this line to the cloud
+environment's Setup script:
+
+```bash
+cd 9-ball-app && bash APA-Tracker/setup_remote.sh
+```
+
+Credentials (`APA_USERNAME`, `APA_PASSWORD`, `APA_ACCESS_TOKEN`) go in the
+environment's secrets, never in the repo.

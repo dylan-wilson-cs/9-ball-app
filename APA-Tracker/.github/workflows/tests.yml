@@ -1,0 +1,78 @@
+name: Tests
+
+# The actual apa-tracker test suite (pytest). Pinned to 3.12 and 3.13 only --
+# NEVER add 3.14 here. Python 3.14.3's asyncio.run() crashes the whole
+# process on Windows with zero traceback (see README.md's "Requires Python
+# 3.12 or 3.13, NOT 3.14" section and scraper/diagnose_eventloop.py, which
+# bisected the bug down to running an event loop, not constructing one).
+# This workflow runs on Linux so that specific crash won't reproduce here,
+# but pinning the matrix keeps a 3.14 upgrade from being picked up silently.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # requirements-dev.txt is pip-compile's fully pinned lock for
+          # requirements-dev.in, which itself pulls in requirements.in --
+          # installing it alone already covers every runtime + dev
+          # dependency at the exact version tested locally. See
+          # docs/reproducible_builds.md.
+          pip install -r requirements-dev.txt
+
+      - name: Install Playwright's Chromium browser
+        # requirements-dev.txt installs the playwright package, but the
+        # actual browser binary is a separate download this step fetches --
+        # needed for tests/test_dashboard_browser.py's real, headless
+        # Chromium regression test of the Coach Dashboard.
+        run: playwright install --with-deps chromium
+
+      - name: Run test suite
+        run: python -m pytest tests/ -v
+
+      - name: CI-mode full pipeline smoke test (no live scrape, no credentials)
+        # Proves pipeline_run_all.py itself works as a real subprocess, not
+        # just its orchestration logic (mocked in
+        # tests/test_pipeline_run_all.py) or the ingest/export functions
+        # called directly in-process (tests/test_full_pipeline_integration.py).
+        # --skip-scrape + --fixtures points it at a small committed sample
+        # tree instead of a live login; --config redirects the database and
+        # every export into ci-build/, never the real data/ or exports/. See
+        # docs/reproducible_builds.md's "CI mode" section.
+        run: |
+          python pipeline_run_all.py --skip-scrape --skip-tests \
+            --fixtures tests/fixtures/sample_pipeline \
+            --config tests/fixtures/ci_pipeline_config.yaml
+          test -s ci-build/exports/apa_stats.xlsx
+          test -s ci-build/exports/apa_data.json
+          test -s ci-build/exports/captains_edge.html
+          test -s ci-build/exports/captains_edge.json
+          test -s ci-build/exports/captains_edge.xlsx
+          test -s ci-build/exports/lineups.json
+          test -s ci-build/exports/analysis_tabs.html
+          echo "CI-mode pipeline run produced every expected artifact."
