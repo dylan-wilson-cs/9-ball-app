@@ -100,3 +100,19 @@ class TestWriteWorkbook:
 
         workbook = load_workbook(path)
         assert len(set(workbook.sheetnames)) == len(workbook.sheetnames)
+
+    def test_excel_forbidden_characters_in_a_real_team_name_are_replaced(self, tmp_path):
+        """Live regression: the opponent "Rack*Snap*n*Roll" made openpyxl raise
+        "Invalid character * found in sheet title" and aborted the whole
+        Coach Cockpit build. Every forbidden character (\\ / * ? : [ ]) must
+        be replaced before the title is used; the sheet itself still carries
+        the real name in its rows."""
+        report = build_team_matchup_report(_matrix(), "Mark It Up", "Rack*Snap*n*Roll [9?]/:\\")
+        path = write_workbook([report], tmp_path / "out.xlsx")
+
+        workbook = load_workbook(path)
+        assert workbook.sheetnames  # it opened and has sheets
+        for title in workbook.sheetnames:
+            assert not any(ch in title for ch in "\\/*?:[]"), title
+            assert len(title) <= 31
+        assert any(t.startswith("Rack_Snap_n_Roll") for t in workbook.sheetnames)

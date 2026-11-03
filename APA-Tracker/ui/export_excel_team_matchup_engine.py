@@ -6,6 +6,7 @@ REPORTER -- no computation happens here.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -17,6 +18,11 @@ from analytics.team_matchup_engine import TeamMatchupReport
 
 HEADER_FONT = Font(bold=True, color="FFFFFF")
 HEADER_FILL = PatternFill("solid", fgColor="1F3864")
+
+# Characters Excel forbids anywhere in a sheet title. Real APA team names
+# contain them ("Rack*Snap*n*Roll" is a live example), and openpyxl raises
+# rather than renaming, so they are replaced before the title is used.
+_ILLEGAL_TITLE_CHARS = re.compile(r"[\\/*?:\[\]]")
 
 
 def _scope_label(report: TeamMatchupReport) -> str:
@@ -30,7 +36,8 @@ def _unique_title(desired: str, used_titles: set[str]) -> str:
     computed once, up front, so openpyxl never has to silently rename a
     colliding title itself (which pushed a truncated name back OVER 31
     characters by appending its own suffix)."""
-    base = (desired or "Scope")[:31]
+    cleaned = _ILLEGAL_TITLE_CHARS.sub("_", desired or "").strip().strip("'").strip()
+    base = (cleaned or "Scope")[:31]
     if base not in used_titles:
         used_titles.add(base)
         return base

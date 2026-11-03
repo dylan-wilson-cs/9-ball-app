@@ -357,3 +357,15 @@ def test_main_maps_missing_credentials_to_its_exit_code(monkeypatch):
         AssertionError("launcher must not run without credentials")
     ))
     assert remote.main([]) == remote.EXIT_NO_CREDENTIALS
+
+
+def test_main_reports_an_unexpected_error_as_a_plain_failure(monkeypatch, caplog):
+    monkeypatch.setattr(remote, "resolve_token", lambda **kw: "tok")
+    monkeypatch.setattr(remote.launcher, "run_game_night", lambda **kw: (_ for _ in ()).throw(
+        ValueError("Invalid character * found in sheet title")
+    ))
+    monkeypatch.setattr(remote, "run", lambda **kw: remote.launcher.run_game_night())
+    with caplog.at_level("ERROR"):
+        assert remote.main([]) == 1
+    assert "unexpected ValueError" in caplog.text
+    assert "sheet title" in caplog.text

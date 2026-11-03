@@ -350,6 +350,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     except KeyboardInterrupt:
         logger.error("interrupted")
         return launcher.EXIT_INTERRUPT
+    except Exception as exc:  # noqa: BLE001 - report the category and message, never a payload
+        logger.error("REMOTE REFRESH FAILED (unexpected %s): %s", type(exc).__name__, exc)
+        return 1
     return EXIT_OK
 
 
