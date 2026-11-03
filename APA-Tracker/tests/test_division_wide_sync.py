@@ -595,9 +595,12 @@ class TestRunDivisionWide:
     def test_end_to_end_reports_complete_coverage_and_no_gaps(self, db, monkeypatch, mocked_fetches):
         monkeypatch.setattr(sync, "create_db_engine", lambda config: db.get_bind())
         monkeypatch.setattr(sync, "load_config", lambda path: {})
+        own_pass_calls: list[dict] = []
         monkeypatch.setattr(
             sync, "run_all_teams",
-            lambda config_path, export=False, db_path=None, resume=False: {"teams": 0},
+            lambda config_path, export=False, db_path=None, resume=False, scoresheets=True: (
+                own_pass_calls.append({"scoresheets": scoresheets}) or {"teams": 0}
+            ),
         )
         monkeypatch.setattr(sync, "fetch_dashboard_teams", lambda config: {
             "leagueTeams": [{"id": 301, "name": "Fixture Sharks",
@@ -617,6 +620,10 @@ class TestRunDivisionWide:
         # in-memory database this test already set up rather than a second,
         # empty one.
         result = sync.run_division_wide(config_path="unused.yaml", export=False)
+        # The own-team pass must not ingest scoresheets: the division pass
+        # covers the account's own matches after every roster is known, so
+        # alias ids resolve. Doing both stored every own game twice (live).
+        assert own_pass_calls == [{"scoresheets": False}]
 
         assert result["coverage_gaps"] == []
         assert result["division_wide"]["teams_ingested"] == 2
@@ -624,9 +631,12 @@ class TestRunDivisionWide:
     def test_a_division_with_no_format_context_is_reported_incomplete(self, db, monkeypatch, mocked_fetches):
         monkeypatch.setattr(sync, "create_db_engine", lambda config: db.get_bind())
         monkeypatch.setattr(sync, "load_config", lambda path: {})
+        own_pass_calls: list[dict] = []
         monkeypatch.setattr(
             sync, "run_all_teams",
-            lambda config_path, export=False, db_path=None, resume=False: {"teams": 0},
+            lambda config_path, export=False, db_path=None, resume=False, scoresheets=True: (
+                own_pass_calls.append({"scoresheets": scoresheets}) or {"teams": 0}
+            ),
         )
         monkeypatch.setattr(sync, "fetch_dashboard_teams", lambda config: {
             "leagueTeams": [{"id": 301, "name": "Fixture Sharks",
@@ -642,6 +652,10 @@ class TestRunDivisionWide:
         monkeypatch.setattr(sync, "fetch_team_data", failing_team_data)
 
         result = sync.run_division_wide(config_path="unused.yaml", export=False)
+        # The own-team pass must not ingest scoresheets: the division pass
+        # covers the account's own matches after every roster is known, so
+        # alias ids resolve. Doing both stored every own game twice (live).
+        assert own_pass_calls == [{"scoresheets": False}]
 
         # No division was actually synced, so there is nothing to report as
         # ingested against nothing discovered -- zero teams processed.

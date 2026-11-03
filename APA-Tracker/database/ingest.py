@@ -330,10 +330,20 @@ def ingest_match_scores(db: Session, match_id, scores: list[dict]) -> tuple[int,
     UPDATED rather than skipped: match_player_scores() can be re-run against
     the same match after it goes from unfinalized to finalized, and a
     forfeit/incomplete flag or the final result can change between those two
-    reads. Deduped the same way, on (player_id, match_id).
+    reads. Deduped on (player_id, match_id, position): one row per scoresheet
+    line, so a player who shoots twice in one team match keeps both games.
+
+    Match-level reconciliation, like ingest_head_to_head: once the current
+    authoritative scoresheet has been written, every OTHER PlayerMatch row
+    still attached to this match is deleted. Observed live: the same match
+    ingested first under scoresheet alias ids (before any roster existed to
+    resolve them) and again under canonical roster ids left every one of the
+    account's own games stored twice. The rows written here are the truth
+    for this match; anything else on it is stale.
     """
     match = _resolve_match_pk(db, match_id)
     created = updated = 0
+    kept_ids: list[int] = []
     for entry in scores:
         player_id = entry.get("player_id") or ""
         player_name = entry.get("player_name") or ""
@@ -350,9 +360,10 @@ def ingest_match_scores(db: Session, match_id, scores: list[dict]) -> tuple[int,
 
         player = upsert_player(db, player_id, player_name)
 
+        position = _to_int(entry.get("position"))
         existing = (
             db.query(PlayerMatch)
-            .filter_by(player_id=player.id, match_id=match.id)
+            .filter_by(player_id=player.id, match_id=match.id, position=position)
             .one_or_none()
         )
         # opponent is the OTHER side's name, not this player's own team --
@@ -377,9 +388,15 @@ def ingest_match_scores(db: Session, match_id, scores: list[dict]) -> tuple[int,
             "opponent": opponent,
             "team_id": entry.get("team_id"),
             "team_name": entry.get("team_name"),
+            "position": position,
             "skill_level": _to_int(entry.get("skill_level")),
+            "opponent_skill_level": _to_int(entry.get("opponent_skill_level")),
             "result": _normalize_result(entry.get("result")),
             "points_earned": _to_float(entry.get("points_earned")),
+            "eight_ball_games_won": _to_int(entry.get("eight_ball_games_won")),
+            "opponent_eight_ball_games_won": _to_int(entry.get("opponent_eight_ball_games_won")),
+            "nine_ball_points": _to_int(entry.get("nine_ball_points")),
+            "opponent_nine_ball_points": _to_int(entry.get("opponent_nine_ball_points")),
             "eight_on_break": _to_int(entry.get("eight_on_break")),
             "eight_break_and_run": _to_int(entry.get("eight_break_and_run")),
             "nine_on_snap": _to_int(entry.get("nine_on_snap")),
@@ -389,9 +406,27 @@ def ingest_match_scores(db: Session, match_id, scores: list[dict]) -> tuple[int,
             for key, value in fields.items():
                 setattr(existing, key, value)
             updated += 1
+            row = existing
         else:
-            db.add(PlayerMatch(player_id=player.id, match_id=match.id, **fields))
+            row = PlayerMatch(player_id=player.id, match_id=match.id, **fields)
+            db.add(row)
             created += 1
+        db.flush()
+        kept_ids.append(row.id)
+
+    if kept_ids:
+        stale = (
+            db.query(PlayerMatch)
+            .filter(PlayerMatch.match_id == match.id, PlayerMatch.id.notin_(kept_ids))
+            .all()
+        )
+        for row in stale:
+            db.delete(row)
+        if stale:
+            logger.info(
+                "Reconciled match %s: removed %d stale player-match row(s) not on the "
+                "current scoresheet", match_id, len(stale),
+            )
 
     db.commit()
     logger.info(

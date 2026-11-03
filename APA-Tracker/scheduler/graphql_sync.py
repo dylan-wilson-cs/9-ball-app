@@ -283,7 +283,7 @@ def apply_identity_mapping(rows: list[dict], mapping: dict[str, str], keys: tupl
 
 def run_all_teams(
     config_path: str = "apa_config.yaml", export: bool = True, db_path: Optional[str] = None,
-    resume: bool = False,
+    resume: bool = False, scoresheets: bool = True,
 ) -> dict[str, int]:
     """Sync every team the account plays on, not just the one configured in
     apa_config.yaml's team.team_id.
@@ -306,6 +306,14 @@ def run_all_teams(
     APA access token is short-lived and a full sync can outlast it. Cheap,
     idempotent calls (roster, schedule, standings) are always redone
     regardless, so a resumed run still discovers anything genuinely new.
+
+    ``scoresheets=False`` skips this function's own per-match scoresheet
+    ingest. run_division_wide() passes that: its whole-division pass covers
+    every one of the account's own matches too, AFTER every roster in the
+    division has been ingested, so every scoresheet alias resolves to its
+    canonical roster identity. Ingesting the same matches here first -- when
+    no opponent roster exists yet -- stored each of the account's own games
+    a second time under unresolved alias ids (observed live).
     """
     config = load_config(config_path)
     if db_path:
@@ -380,6 +388,24 @@ def run_all_teams(
                 team = upsert_team(db, row["team_id"], row["team_name"])
                 upsert_roster(db, team, roster)
                 roster_count += len(roster)
+                # Per-team truth. Player.skill_level/matches_won/... is ONE
+                # shared row per person, overwritten by whichever team was
+                # ingested last -- wrong for anyone on two teams (an 8-ball
+                # and a 9-ball skill level are different numbers). The
+                # per-(team, session) row is what every roster-aware reader
+                # uses; write it here too, not only in the division pass.
+                identity = team_row(data)
+                for entry in roster:
+                    if not entry.get("player_id"):
+                        continue
+                    player = upsert_player(db, entry["player_id"], entry.get("player_name") or "", team)
+                    ingest_player_team_history(db, player, [{
+                        "team_id": row["team_id"], "team_name": row["team_name"],
+                        "division_id": identity.get("division_id") or row.get("division_id") or "",
+                        "session_name": identity.get("session_name") or row.get("session_name") or "",
+                        "is_current": True, "skill_level": entry.get("skill_level"),
+                        "matches_won": entry.get("matches_won"), "matches_played": entry.get("matches_played"),
+                    }])
         counts["roster"] = roster_count
 
         # Per-player scoresheet for every match that's actually been played.
@@ -394,6 +420,8 @@ def run_all_teams(
         identity_resolved_count = 0
         identity_unresolved_count = 0
         for row in viewer_matches_rows(viewer_matches):
+            if not scoresheets:
+                break
             if not row["match_id"] or not row["is_scored"]:
                 continue
             if resume and match_already_has_scoresheet(db, row["match_id"]):
@@ -795,7 +823,12 @@ def run_division_wide(
     coverage's result>}. A non-empty "coverage_gaps" means this run must not
     be promoted.
     """
-    own_counts = run_all_teams(config_path, export=False, db_path=db_path, resume=resume)
+    # scoresheets=False: this function's own division pass below ingests
+    # every match in each division -- the account's own included -- after
+    # every roster is known, so alias ids resolve. See run_all_teams.
+    own_counts = run_all_teams(
+        config_path, export=False, db_path=db_path, resume=resume, scoresheets=False,
+    )
 
     config = load_config(config_path)
     if db_path:

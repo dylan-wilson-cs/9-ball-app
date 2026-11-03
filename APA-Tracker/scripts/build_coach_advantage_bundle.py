@@ -182,14 +182,22 @@ def acquire(db_path: Path) -> tuple[Path, PhaseResult]:
     return db_path, PhaseResult("acquire", "ok", f"using {db_path.name} (read-only, no rescrape)")
 
 
-def _skill_trends(db: Session) -> dict[int, "object"]:
-    """Every player's real skill-level trend, grouped by player_id -- one
-    query, reused for every report this build produces. Mirrors
-    ui/export_json.py's own ``_skill_level_summary`` grouping."""
-    by_player: dict[int, list] = {}
+def _skill_trends(db: Session) -> dict[tuple[int, Optional[str]], "object"]:
+    """Every player's real skill-level trend, grouped by (player_id, format)
+    -- one query, reused for every report this build produces.
+
+    Per FORMAT, not per player: APA keeps a separate skill level for 8-ball
+    and 9-ball, and a player on one team of each has two independent
+    histories. Merging them read as constant volatility and phantom
+    "SL 5 -> SL 4" changes that were only the two formats alternating
+    (observed live for every two-team player). Same grouping
+    analytics.matchup_builder already uses for matchup trends.
+    """
+    by_group: dict[tuple[int, Optional[str]], list] = {}
     for row in skill_level_history(db):
-        by_player.setdefault(row.player_id, []).append(row)
-    return {player_id: skill_trend_for(matches) for player_id, matches in by_player.items()}
+        match_format = row.match.format if row.match else None
+        by_group.setdefault((row.player_id, match_format), []).append(row)
+    return {key: skill_trend_for(matches) for key, matches in by_group.items()}
 
 
 def compute(
@@ -222,8 +230,8 @@ def compute(
                 pairing,
                 our_team_external_id,
                 scope.opponent_team_external_id,
-                player_trend=trends.get(pairing.player_id),
-                opponent_trend=trends.get(pairing.opponent_id),
+                player_trend=trends.get((pairing.player_id, scope.format)),
+                opponent_trend=trends.get((pairing.opponent_id, scope.format)),
                 opponent_team_name=scope.opponent_team_name,
             )
             for pairing in scope.matrix.pairings

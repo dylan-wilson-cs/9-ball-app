@@ -174,6 +174,18 @@ class PlayerMatch(Base):
     pa = Column(Float)
     points_earned = Column(Float)
     result = Column(String)
+    # Which scoresheet line (matchPositionNumber) this row is. A player who
+    # shoots twice in one team match has two rows, one per position; the
+    # natural key is therefore (player_id, match_id, position), never
+    # (player_id, match_id) alone -- that collapsed a real second game.
+    position = Column(Integer)
+    # The game score behind `result`: racks won per side in 8-ball,
+    # balls/points per side in 9-ball. One pair is non-null per row.
+    eight_ball_games_won = Column(Integer)
+    opponent_eight_ball_games_won = Column(Integer)
+    nine_ball_points = Column(Integer)
+    opponent_nine_ball_points = Column(Integer)
+    opponent_skill_level = Column(Integer)
     # Real, captured MATCH_DETAIL_QUERY score-row fields (parser/apa_graphql.py)
     # -- not booleans: an APA match is a race across multiple racks, so these
     # are per-match COUNTS (confirmed against a real fixture: eightBallWins=2

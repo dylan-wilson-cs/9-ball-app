@@ -60,6 +60,27 @@ as "don't fabricate" would require.
 
 All columns **Raw**, from `TeamStat`.
 
+## Per-game scoresheet rows (`PlayerMatch`)
+
+One row per scoresheet LINE (`matchPositionNumber`), not per (player,
+match): a player who shoots twice in one team match has two rows. All
+**Raw** from `MATCH_DETAIL_QUERY`'s score rows unless noted.
+
+| Column | Provenance | Source |
+|---|---|---|
+| position | Raw | `matchPositionNumber` |
+| skill_level / opponent_skill_level | Raw | this line's `skillLevel`, and the same-position line on the other side |
+| result | Raw | `winLoss` |
+| points_earned | Raw | `eightBallMatchPointsEarned` or `nineBallMatchPointsEarned` (one is null per format) |
+| eight_ball_games_won / opponent_eight_ball_games_won | Raw | `eightBallWins` on this line and on the opposing same-position line (8-ball only) |
+| nine_ball_points / opponent_nine_ball_points | Raw | `nineBallPoints` on this line and on the opposing same-position line (9-ball only) |
+| eight_on_break, eight_break_and_run, nine_on_snap, nine_break_and_run | Raw | per-match counts, as before |
+
+Skill level per FORMAT: APA keeps separate 8-ball and 9-ball skill levels,
+so any trend over `PlayerMatch.skill_level` must group by the match's
+format (`Match.format`) as well as the player. Merging the two read as
+perpetual volatility for anyone on one team of each format.
+
 ## Skill Level History sheet
 
 All columns **Raw** — a direct read of `PlayerMatch.skill_level` per match, already written by the scoresheet ingest path. `Source` is a constant label (`"scoresheet"`), not a computed value.

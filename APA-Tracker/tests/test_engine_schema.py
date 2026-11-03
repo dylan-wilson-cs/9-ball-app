@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import create_engine, text
 
-from database.engine import StaleSchemaError, check_schema, create_db_engine
+from database.engine import StaleSchemaError, add_missing_columns, check_schema, create_db_engine
 from database.models import Base
 
 
@@ -63,17 +63,34 @@ class TestCheckSchema:
         assert check_schema(engine) == []
 
 
-class TestCreateDbEngineRefusesStaleFiles:
-    def test_raises_with_the_columns_and_the_fix(self, tmp_path):
+class TestCreateDbEngineWidensStaleFiles:
+    def test_missing_nullable_columns_are_added_in_place(self, tmp_path):
+        """The production database is the permanent career archive and is
+        copied into staging at the start of every refresh, so a widened
+        model must not demand deleting it. Every column this project adds
+        is nullable, which SQLite can ALTER TABLE ... ADD COLUMN in place."""
         path = tmp_path / "old.db"
         _make_stale_db(path)
 
-        with pytest.raises(StaleSchemaError) as excinfo:
-            create_db_engine({"database": {"path": str(path)}})
+        engine = create_db_engine({"database": {"path": str(path)}})
 
-        message = str(excinfo.value)
-        assert "matches.week" in message, "must name what is actually missing"
-        assert "delete the file" in message, "must say how to fix it"
+        assert check_schema(engine) == []
+        with engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO matches (external_id, week, home_score, is_bye) VALUES ('M1', 3, 12.0, 0)"
+            ))
+            row = conn.execute(text("SELECT week, home_score FROM matches WHERE external_id = 'M1'")).one()
+        assert tuple(row) == (3, 12.0)
+
+    def test_add_missing_columns_reports_what_it_added_and_is_idempotent(self, tmp_path):
+        path = tmp_path / "old.db"
+        _make_stale_db(path)
+        engine = create_engine(f"sqlite:///{path}")
+        Base.metadata.create_all(engine)
+
+        added = add_missing_columns(engine)
+        assert "matches.week" in added and "matches.home_score" in added
+        assert add_missing_columns(engine) == []
 
     def test_a_fresh_path_is_fine(self, tmp_path):
         engine = create_db_engine({"database": {"path": str(tmp_path / "sub" / "new.db")}})

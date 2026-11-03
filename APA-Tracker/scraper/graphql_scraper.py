@@ -611,17 +611,33 @@ def match_player_scores(match: dict[str, Any]) -> list[dict[str, Any]]:
     a division plays one format or the other, never both, so exactly one of
     the two source fields is ever non-null for a given player.
     """
+    # The other side's scoresheet line for each position, so every row can
+    # carry the game score it was part of (racks won in 8-ball, balls/points
+    # in 9-ball) from BOTH perspectives -- a 3-2 line, not just a W.
+    by_side_position: dict[str, dict] = {"home": {}, "away": {}}
+    for result in match.get("results") or []:
+        result = result or {}
+        side = (result.get("homeAway") or "").lower()
+        if side in by_side_position:
+            for score in result.get("scores") or []:
+                score = score or {}
+                if score.get("matchPositionNumber") is not None:
+                    by_side_position[side][score["matchPositionNumber"]] = score
+
     rows = []
     for result in match.get("results") or []:
         result = result or {}
         side = (result.get("homeAway") or "").lower()
         team = (match.get("home") if side == "home" else match.get("away")) or {}
+        other_side = "away" if side == "home" else "home"
         for score in result.get("scores") or []:
             score = score or {}
             player = score.get("player") or {}
             points_earned = score.get("eightBallMatchPointsEarned")
             if points_earned is None:
                 points_earned = score.get("nineBallMatchPointsEarned")
+            position = score.get("matchPositionNumber")
+            opponent_score = by_side_position[other_side].get(position, {}) if position is not None else {}
             rows.append(
                 {
                     "match_id": str(match.get("id") or ""),
@@ -629,9 +645,21 @@ def match_player_scores(match: dict[str, Any]) -> list[dict[str, Any]]:
                     "player_name": player.get("displayName") or "",
                     "team_id": str(team.get("id") or ""),
                     "team_name": team.get("name") or "",
+                    # The scoresheet line this row is: one player can shoot
+                    # twice in one team match (two positions), and each is a
+                    # distinct real game with its own result.
+                    "position": position,
                     "skill_level": score.get("skillLevel"),
                     "result": score.get("winLoss"),
                     "points_earned": points_earned,
+                    # The game score itself. 8-ball: racks won by each side.
+                    # 9-ball: balls/points scored by each side. Exactly one
+                    # pair is ever non-null, same as points_earned.
+                    "eight_ball_games_won": score.get("eightBallWins"),
+                    "nine_ball_points": score.get("nineBallPoints"),
+                    "opponent_eight_ball_games_won": opponent_score.get("eightBallWins"),
+                    "opponent_nine_ball_points": opponent_score.get("nineBallPoints"),
+                    "opponent_skill_level": opponent_score.get("skillLevel"),
                     "forfeited": bool(score.get("matchForfeited")),
                     "incomplete": bool(score.get("incompleteMatch")),
                     # Real per-match COUNTS, not booleans -- confirmed against

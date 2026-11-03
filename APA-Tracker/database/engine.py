@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine, event, inspect
+from sqlalchemy import Engine, create_engine, event, inspect, text
 
 from database.models import Base
 
@@ -46,6 +46,40 @@ def check_schema(engine: Engine) -> list[str]:
             if column.name not in present:
                 missing.append(f"{table_name}.{column.name}")
     return missing
+
+
+def add_missing_columns(engine: Engine) -> list[str]:
+    """Add every column the models expect but the file lacks, in place.
+
+    SQLite supports ``ALTER TABLE ... ADD COLUMN`` for a nullable column (or
+    one with a default), which covers every column this project has ever
+    added. The production database is the permanent career archive and is
+    copied into staging at the start of each refresh, so "delete the file"
+    is no longer an acceptable fix for a widened model. Returns the
+    descriptions of the columns added. Raises StaleSchemaError for a
+    column that cannot be added this way.
+    """
+    missing = set(check_schema(engine))
+    if not missing:
+        return []
+    added: list[str] = []
+    with engine.begin() as conn:
+        for table_name, table in Base.metadata.tables.items():
+            for column in table.columns:
+                key = f"{table_name}.{column.name}"
+                if key not in missing:
+                    continue
+                if not column.nullable and column.default is None and column.server_default is None:
+                    raise StaleSchemaError(
+                        f"{key} is NOT NULL with no default and cannot be added to an "
+                        f"existing table in place; rebuild the database from the API."
+                    )
+                type_sql = column.type.compile(dialect=engine.dialect)
+                conn.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN "{column.name}" {type_sql}'))
+                added.append(key)
+    if added:
+        logger.info("Schema updated in place: added %s", ", ".join(added))
+    return added
 
 
 def _enable_foreign_keys(dbapi_connection, connection_record) -> None:
@@ -84,15 +118,11 @@ def create_db_engine(config: dict, create_tables: bool = True) -> Engine:
     event.listen(engine, "connect", _enable_foreign_keys)
     if create_tables:
         Base.metadata.create_all(engine)
-
+        add_missing_columns(engine)
         missing = check_schema(engine)
         if missing:
             raise StaleSchemaError(
-                f"{db_path} was written by an older version and is missing "
-                f"{len(missing)} column(s): {', '.join(missing)}.\n\n"
-                f"Every row in it can be re-fetched from the API, so the fix is "
-                f"to delete the file and re-run:\n"
-                f"    del \"{db_path}\"      (PowerShell)\n"
-                f"    rm {db_path}          (bash)"
+                f"{db_path} is missing {len(missing)} column(s) that could not be "
+                f"added in place: {', '.join(missing)}. Rebuild it from the API."
             )
     return engine
