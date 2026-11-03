@@ -599,6 +599,7 @@ def sync_division_wide(
         "roster_players_discovered": 0, "roster_players_ingested": 0,
         "matches_discovered": 0, "matches_ingested": 0,
         "scored_matches_discovered": 0, "scored_matches_with_scoresheet": 0,
+        "scored_matches_awaiting_scoresheet": 0,
         "head_to_head_rows": 0,
         "identity_resolved": 0, "identity_unresolved": 0,
     }
@@ -682,6 +683,23 @@ def sync_division_wide(
             )
             continue
         scores = match_player_scores(detail)
+        if not scores and match["home_score"] is None and match["away_score"] is None \
+                and not match["is_finalized"]:
+            # Observed live: APA flags a match isScored the day it is played,
+            # but for a day or two afterwards the schedule carries no team
+            # points and the match detail has no scoresheet rows, and it is
+            # not finalized. Nothing exists upstream to fetch yet, so this is
+            # not a coverage gap in the scrape -- the next refresh picks it
+            # up. A match with posted team points (or finalized) and still
+            # no scoresheet rows stays a real gap below.
+            counts["scored_matches_awaiting_scoresheet"] += 1
+            logger.info(
+                "Match %s (%s vs %s, %s) is marked scored but APA has posted no "
+                "scores or scoresheet yet; treating as awaiting scoresheet.",
+                match["match_id"], match["home_team_name"], match["away_team_name"],
+                match["date"],
+            )
+            continue
         # Resolve each scoresheet alias id to its real canonical-roster
         # identity BEFORE ingesting -- see resolve_scoresheet_identities'
         # docstring for why the scoresheet's own id is not stable.
@@ -735,9 +753,15 @@ def reconcile_division_wide_coverage(totals: dict[str, int]) -> list[str]:
             f"{totals['matches_discovered'] - totals['matches_ingested']} discovered "
             f"scheduled match(es) were not ingested"
         )
-    if totals["scored_matches_with_scoresheet"] < totals["scored_matches_discovered"]:
+    # A match APA marks scored but has not yet posted anything for (no team
+    # points, no scoresheet rows, not finalized) is accounted for separately
+    # by sync_division_wide; it is complete as far as this scrape can be.
+    covered = totals["scored_matches_with_scoresheet"] + totals.get(
+        "scored_matches_awaiting_scoresheet", 0
+    )
+    if covered < totals["scored_matches_discovered"]:
         problems.append(
-            f"{totals['scored_matches_discovered'] - totals['scored_matches_with_scoresheet']} "
+            f"{totals['scored_matches_discovered'] - covered} "
             f"completed match(es) have no scoresheet"
         )
     return problems
@@ -790,6 +814,7 @@ def run_division_wide(
         "roster_players_discovered": 0, "roster_players_ingested": 0,
         "matches_discovered": 0, "matches_ingested": 0,
         "scored_matches_discovered": 0, "scored_matches_with_scoresheet": 0,
+        "scored_matches_awaiting_scoresheet": 0,
         "head_to_head_rows": 0,
         "identity_resolved": 0, "identity_unresolved": 0,
     }
@@ -825,12 +850,13 @@ def run_division_wide(
         "Division-wide sync complete: %d division(s), %d team(s) discovered "
         "(%d ingested), %d roster player(s) discovered (%d ingested), %d match(es) "
         "discovered (%d ingested), %d scored match(es) discovered (%d with a "
-        "scoresheet). Scoresheet identity: %d resolved to canonical roster, %d "
-        "unresolved (rate %s). Coverage gaps: %s",
+        "scoresheet, %d awaiting APA's scoresheet). Scoresheet identity: %d resolved "
+        "to canonical roster, %d unresolved (rate %s). Coverage gaps: %s",
         len(division_ids), totals["teams_discovered"], totals["teams_ingested"],
         totals["roster_players_discovered"], totals["roster_players_ingested"],
         totals["matches_discovered"], totals["matches_ingested"],
         totals["scored_matches_discovered"], totals["scored_matches_with_scoresheet"],
+        totals["scored_matches_awaiting_scoresheet"],
         totals["identity_resolved"], totals["identity_unresolved"],
         "n/a" if identity_rate is None else f"{identity_rate * 100:.1f}%",
         "none" if not coverage_gaps else "; ".join(coverage_gaps),

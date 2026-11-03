@@ -353,6 +353,47 @@ class TestSyncDivisionWide:
         gaps = sync.reconcile_division_wide_coverage(counts)
         assert any("scoresheet" in g for g in gaps)
 
+    def test_a_scored_match_apa_has_not_posted_yet_is_awaiting_not_a_gap(self, db, monkeypatch):
+        """Observed live two days after play: isScored is already true, but
+        the schedule carries no team points, the match is not finalized, and
+        the match detail has no scoresheet rows. Nothing exists upstream to
+        fetch, so this must not block staging; the next refresh gets it."""
+        pending_schedule = {"schedule": [
+            {"weekOfPlay": 8, "matches": [{
+                "id": 90408, "isBye": False, "status": "COMPLETED", "startTime": "2026-11-01",
+                "isScored": True, "isFinalized": False, "results": [],
+                "home": {"id": 301, "name": "Fixture Sharks"},
+                "away": {"id": 302, "name": "Fixture Renegades"},
+            }]},
+        ]}
+        monkeypatch.setattr(sync, "fetch_division_rosters", lambda config, division_id: ROSTERS_PAYLOAD)
+        monkeypatch.setattr(sync, "fetch_division_schedule", lambda config, division_id: pending_schedule)
+        monkeypatch.setattr(sync, "fetch_match_detail", lambda config, match_id: {"id": 90408, "results": []})
+
+        counts = sync.sync_division_wide(config={}, db=db, division_id=DIVISION_ID,
+                                          division_format=FORMAT_NAME, division_session_name=SESSION_NAME)
+
+        assert counts["scored_matches_discovered"] == 1
+        assert counts["scored_matches_with_scoresheet"] == 0
+        assert counts["scored_matches_awaiting_scoresheet"] == 1
+        assert sync.reconcile_division_wide_coverage(counts) == []
+
+    def test_posted_team_points_with_an_empty_scoresheet_is_still_a_gap(self, db, monkeypatch):
+        """The narrow carve-out above must not swallow a real defect: APA has
+        posted team points for this match, so a scoresheet should exist, and
+        an empty detail means the scrape missed it."""
+        monkeypatch.setattr(sync, "fetch_division_rosters", lambda config, division_id: ROSTERS_PAYLOAD)
+        monkeypatch.setattr(sync, "fetch_division_schedule", lambda config, division_id: SCHEDULE_PAYLOAD)
+        monkeypatch.setattr(sync, "fetch_match_detail", lambda config, match_id: {"id": 90401, "results": []})
+
+        counts = sync.sync_division_wide(config={}, db=db, division_id=DIVISION_ID,
+                                          division_format=FORMAT_NAME, division_session_name=SESSION_NAME)
+
+        assert counts["scored_matches_discovered"] == 1
+        assert counts["scored_matches_with_scoresheet"] == 0
+        assert counts["scored_matches_awaiting_scoresheet"] == 0
+        assert any("scoresheet" in g for g in sync.reconcile_division_wide_coverage(counts))
+
     def test_a_valid_unresolved_alias_still_counts_as_real_coverage(self, db, monkeypatch):
         """The repair must not overcorrect: a scoresheet alias id that is
         real (non-blank) but fails to resolve to the canonical roster is
@@ -528,6 +569,19 @@ class TestReconciliation:
         totals["scored_matches_with_scoresheet"] = 3
         gaps = sync.reconcile_division_wide_coverage(totals)
         assert any("scoresheet" in g for g in gaps)
+
+    def test_a_scoresheet_apa_has_not_posted_yet_completes_coverage(self):
+        totals = self._complete()
+        totals["scored_matches_with_scoresheet"] = 3
+        totals["scored_matches_awaiting_scoresheet"] = 1
+        assert sync.reconcile_division_wide_coverage(totals) == []
+
+    def test_awaiting_does_not_mask_a_second_missing_scoresheet(self):
+        totals = self._complete()
+        totals["scored_matches_with_scoresheet"] = 2
+        totals["scored_matches_awaiting_scoresheet"] = 1
+        gaps = sync.reconcile_division_wide_coverage(totals)
+        assert any("1 completed match(es) have no scoresheet" in g for g in gaps)
 
     def test_multiple_gaps_are_all_reported_at_once(self):
         totals = self._complete()
