@@ -108,24 +108,27 @@ class _FakePage:
     def fill(self, selector, value):
         self.filled[selector] = value
 
-    def get_by_role(self, role, name=None):
-        assert (role, name) == ("button", remote.LOGIN_BUTTON_NAME)
-        page = self
+    def get_by_role(self, role, name=None, exact=False):
+        assert role == "button"
+        if name == remote.LOGIN_BUTTON_NAME:
+            page = self
 
-        class _Clickable:
-            def click(self, timeout=None):
-                page.clicked.append(f"role=button name={name}")
+            class _Clickable:
+                def click(self, timeout=None):
+                    page.clicked.append(f"role=button name={name}")
 
-        return _Clickable()
+            return _Clickable()
+        assert (name, exact) == (remote.CONTINUE_BUTTON_NAME, True)
+        return self._continue_locator
+
+    def get_by_text(self, text, exact=False):
+        raise AssertionError("the interstitial heading is not clickable; locate the Continue button by role")
 
     def wait_for_timeout(self, ms):
         self.tick_count += 1
         if self._on_tick:
             self._on_tick(self.tick_count)
 
-    def get_by_text(self, text, exact=False):
-        assert text == remote.CONTINUE_TEXT
-        return self._continue_locator
 
 
 class _FakeContext:

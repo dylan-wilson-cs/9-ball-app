@@ -65,8 +65,12 @@ DEFAULT_PUBLISH_DIR = PROJECT_ROOT / "exports" / "remote"
 LEAGUE_URL = "https://league.poolplayers.com"
 LOGIN_URL = f"{LEAGUE_URL}/login"
 GRAPHQL_HOST = "gql.poolplayers.com"
-CONTINUE_TEXT = "Continue to Member Services"
 LOGIN_BUTTON_NAME = "Log In"
+# After login, accounts.poolplayers.com/authorize shows an interstitial headed
+# "Continue to Member Services" with the signed-in member and one button whose
+# accessible name is exactly "Continue". The heading is not clickable; the
+# button is what advances to league.poolplayers.com.
+CONTINUE_BUTTON_NAME = "Continue"
 
 DEFAULT_LOGIN_TIMEOUT_S = 180.0
 FORM_TIMEOUT_MS = 30_000
@@ -154,11 +158,11 @@ def acquire_token(
                 if token_holder.get("token"):
                     break
                 try:
-                    control = page.get_by_text(CONTINUE_TEXT, exact=False)
+                    control = page.get_by_role("button", name=CONTINUE_BUTTON_NAME, exact=True)
                     visible = bool(control.count() and control.first.is_visible())
                     if visible and not continue_was_visible:
                         control.first.click(timeout=2000)
-                        logger.info("Clicked '%s'.", CONTINUE_TEXT)
+                        logger.info("Clicked '%s'.", CONTINUE_BUTTON_NAME)
                     continue_was_visible = visible
                 except Exception:  # noqa: BLE001 - control is optional
                     continue_was_visible = False
