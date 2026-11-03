@@ -566,7 +566,7 @@ table.data td.num, table.data th.num { text-align: right; font-variant-numeric: 
         var g = svgEl("g", { tabindex: 0, role: "img", "aria-label": (s.session_name || "") + " " + s.wins + " wins " + s.losses + " losses" });
         g.appendChild(svgEl("rect", { x: x(0), y: cy - 14, width: W - m.l - m.r + m.r, height: 28, fill: "transparent" }));
         g.appendChild(svgEl("path", { d: w > 4 ? "M" + x(0) + "," + (cy - 9) + " h" + (w - 4) + " a4,4 0 0 1 4,4 v10 a4,4 0 0 1 -4,4 h" + (-(w - 4)) + " z" : "M" + x(0) + "," + (cy - 9) + " h" + Math.max(w, 0) + " v18 h" + (-Math.max(w, 0)) + " z", fill: tok(s.is_current ? "--us" : "--other") }));
-        svg.appendChild(svgEl("text", { x: x(rate) + 8, y: cy + 4, "font-size": 12, fill: tok("--ink-2"), "font-variant-numeric": "tabular-nums", text: s.wins + "–" + s.losses + (s.ties ? "–" + s.ties : "") + (s.final_rank ? "  ·  rank " + s.final_rank : "") }));
+        svg.appendChild(svgEl("text", { x: x(rate) + 8, y: cy + 4, "font-size": 12, fill: tok("--ink-2"), "font-variant-numeric": "tabular-nums", text: s.wins + "–" + s.losses + (s.ties ? "–" + s.ties : "") }));
         function show() { var rect = svg.getBoundingClientRect(); tip.show(x(rate) * rect.width / W, (cy - 10) * rect.height / H, s.session_name, [{ label: "Record", value: s.wins + "–" + s.losses }, { label: "Points", value: fmtNum(s.points_for) + " for, " + fmtNum(s.points_against) + " against" }, { label: "Players", value: String(s.players.length) }]); }
         g.addEventListener("pointerenter", show); g.addEventListener("focus", show); g.addEventListener("pointerleave", tip.hide); g.addEventListener("blur", tip.hide);
         svg.appendChild(g);
@@ -584,8 +584,8 @@ table.data td.num, table.data th.num { text-align: right; font-variant-numeric: 
         t.appendChild(tb); var wrap = el("div", { class: "scroll" }); wrap.appendChild(t); plot.appendChild(wrap);
       }
     }, function () {
-      return table([{ key: "session", label: "Season" }, { key: "format", label: "Format" }, { key: "record", label: "Record", num: true }, { key: "pct", label: "Win %", num: true }, { key: "pf", label: "Points for", num: true }, { key: "pa", label: "Points against", num: true }, { key: "rank", label: "Rank", num: true }],
-        sessions.map(function (s) { return { session: s.session_name, format: fmtLabel(s.format), record: s.wins + "–" + s.losses, pct: fmtPct(s.win_pct), pf: fmtNum(s.points_for), pa: fmtNum(s.points_against), rank: s.final_rank }; }));
+      return table([{ key: "session", label: "Season" }, { key: "format", label: "Format" }, { key: "record", label: "Record", num: true }, { key: "pct", label: "Win %", num: true }, { key: "pf", label: "Points for", num: true }, { key: "pa", label: "Points against", num: true }],
+        sessions.map(function (s) { return { session: s.session_name, format: fmtLabel(s.format), record: s.wins + "–" + s.losses, pct: fmtPct(s.win_pct), pf: fmtNum(s.points_for), pa: fmtNum(s.points_against) }; }));
     });
   }
 

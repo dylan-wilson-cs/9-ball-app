@@ -144,3 +144,9 @@ class TestHistoryAndCareer:
         assert len(career) == 1
         assert career[0]["name"] == "Ann Fixture" and career[0]["format"] == "nine"
         assert career[0]["matches_won"] == 45 and career[0]["win_pct"] == round(45 / 85, 4)
+
+    def test_history_carries_no_team_rank(self, doc):
+        """PlayerTeamHistory.rank is a per-player MVP rank; it must never be
+        presented as the team's standing (observed live: 'rank 24' in a
+        ten-team division)."""
+        assert all("final_rank" not in s for s in doc["history"])

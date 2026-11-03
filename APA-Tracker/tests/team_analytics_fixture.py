@@ -61,7 +61,6 @@ def _roster_rows(db, teams, roster_by_team, division, session, current):
             ingest_player_team_history(db, player, [{
                 "team_id": team_id, "team_name": name, "division_id": division, "session_name": session,
                 "is_current": current, "skill_level": sl, "matches_won": None, "matches_played": None,
-                "rank": 1 if team_id in (OUR_ID, PRIOR_ID) else None,
             }])
 
 

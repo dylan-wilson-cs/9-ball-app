@@ -380,17 +380,18 @@ def _lineage(db: Session, ctx: _TeamContext) -> list[dict[str, Any]]:
         if _norm_name(row.team_name) != target or not row.team_external_id:
             continue
         key = (row.team_external_id, row.session_name or "")
+        # PlayerTeamHistory.rank is APA's per-player MVP rank for that season
+        # (dashboardMVP: rank, pa, ppm), not the team's final standing, so no
+        # team rank is derived from it.
         entry = seen.setdefault(key, {
             "team_external_id": row.team_external_id, "session_name": row.session_name,
-            "division_id": row.division_id, "rank": None, "is_current": False,
+            "division_id": row.division_id, "is_current": False,
         })
         entry["is_current"] = entry["is_current"] or bool(row.is_current)
-        if row.rank is not None:
-            entry["rank"] = row.rank
     lineage = list(seen.values())
     if ctx.external_id not in {e["team_external_id"] for e in lineage}:
         lineage.append({"team_external_id": ctx.external_id, "session_name": ctx.session_name,
-                        "division_id": ctx.division_id, "rank": None, "is_current": True})
+                        "division_id": ctx.division_id, "is_current": True})
     lineage.sort(key=lambda e: session_sort_key(e["session_name"]))
     return lineage
 
@@ -432,7 +433,7 @@ def _history(db: Session, ctx: _TeamContext, lineage: list[dict[str, Any]]) -> l
             "division_id": entry["division_id"], "is_current": entry["is_current"],
             "matches_scheduled": len(matches), "wins": wins, "losses": losses, "ties": ties,
             "win_pct": _pct(wins, wins + losses + ties), "points_for": pf, "points_against": pa,
-            "final_rank": entry["rank"], "players": players,
+            "players": players,
         })
     return sessions
 
