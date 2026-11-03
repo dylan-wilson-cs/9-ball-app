@@ -369,3 +369,140 @@ def test_main_reports_an_unexpected_error_as_a_plain_failure(monkeypatch, caplog
         assert remote.main([]) == 1
     assert "unexpected ValueError" in caplog.text
     assert "sheet title" in caplog.text
+
+
+# --- token expiry, re-login, backfill, fresh ---------------------------------------
+
+def _hub(tmp_path):
+    return _hub_run(tmp_path / "run", {"1": "One"})
+
+
+def test_backfill_runs_first_with_promote_then_the_refresh(tmp_path, monkeypatch):
+    monkeypatch.delenv("APA_ACCESS_TOKEN", raising=False)
+    order: list[str] = []
+
+    def fake_backfill(config_path, staging_db, *, resume, promote):
+        order.append(f"backfill resume={resume} promote={promote}")
+        return {"divisions_discovered": 6, "totals": {"scored_matches_with_scoresheet": 400}}
+
+    def fake_game_night(*, resume, open_browser, our_team_id):
+        order.append(f"game-night resume={resume}")
+        return _hub(tmp_path)
+
+    remote.run(
+        backfill=True, publish_dir=tmp_path / "pub",
+        token_resolver=lambda *a, **kw: "tok", game_night=fake_game_night, career_backfill=fake_backfill,
+    )
+    assert order == ["backfill resume=False promote=True", "game-night resume=False"]
+
+
+def test_token_expiry_mid_backfill_logs_in_again_and_resumes(tmp_path, monkeypatch):
+    monkeypatch.delenv("APA_ACCESS_TOKEN", raising=False)
+    tokens = iter(["tok-1", "tok-2", "tok-3"])
+    seen_tokens: list[str] = []
+    attempts: list[bool] = []
+
+    def resolver(*args, **kwargs):
+        env = args[0] if args else kwargs.get("env")
+        assert not env or "APA_ACCESS_TOKEN" not in env  # a re-login must not reuse the dead token
+        return next(tokens)
+
+    def fake_backfill(config_path, staging_db, *, resume, promote):
+        attempts.append(resume)
+        seen_tokens.append(os.environ["APA_ACCESS_TOKEN"])
+        if len(attempts) < 3:
+            raise remote.AccessTokenExpired("The APA access token was rejected")
+        return {"divisions_discovered": 1, "totals": {}}
+
+    remote.run(
+        backfill=True, publish_dir=tmp_path / "pub",
+        token_resolver=resolver, game_night=lambda **kw: _hub(tmp_path), career_backfill=fake_backfill,
+    )
+    assert attempts == [False, True, True]
+    assert seen_tokens == ["tok-1", "tok-2", "tok-3"]
+    assert "APA_ACCESS_TOKEN" not in os.environ
+
+
+def test_builder_error_naming_the_expiry_class_is_treated_as_expiry(tmp_path, monkeypatch):
+    monkeypatch.delenv("APA_ACCESS_TOKEN", raising=False)
+    calls: list[bool] = []
+
+    def fake_game_night(*, resume, open_browser, our_team_id):
+        calls.append(resume)
+        if len(calls) == 1:
+            raise remote.launcher.production_builder.BuildError(
+                "live acquisition failed: AccessTokenExpired", 4
+            )
+        return _hub(tmp_path)
+
+    remote.run(publish_dir=tmp_path / "pub", token_resolver=lambda *a, **kw: "t", game_night=fake_game_night)
+    assert calls == [False, True]
+
+
+def test_non_expiry_failures_are_not_retried(tmp_path, monkeypatch):
+    monkeypatch.delenv("APA_ACCESS_TOKEN", raising=False)
+    calls: list[bool] = []
+
+    def fake_game_night(*, resume, open_browser, our_team_id):
+        calls.append(resume)
+        raise ValueError("something else")
+
+    with pytest.raises(ValueError):
+        remote.run(publish_dir=tmp_path / "pub", token_resolver=lambda *a, **kw: "t", game_night=fake_game_night)
+    assert calls == [False]
+
+
+def test_login_budget_is_bounded(tmp_path, monkeypatch):
+    monkeypatch.delenv("APA_ACCESS_TOKEN", raising=False)
+
+    def always_expired(*, resume, open_browser, our_team_id):
+        raise remote.AccessTokenExpired("expired")
+
+    with pytest.raises(remote.RemoteRefreshError) as excinfo:
+        remote.run(
+            publish_dir=tmp_path / "pub", max_logins=2,
+            token_resolver=lambda *a, **kw: "t", game_night=always_expired,
+        )
+    assert excinfo.value.code == remote.EXIT_LOGIN_FAILED
+    assert "2 login(s)" in str(excinfo.value)
+
+
+def test_an_outside_token_that_expires_is_a_hard_stop(tmp_path, monkeypatch):
+    monkeypatch.setenv("APA_ACCESS_TOKEN", "outside-token")
+
+    def expired(*, resume, open_browser, our_team_id):
+        raise remote.AccessTokenExpired("expired")
+
+    with pytest.raises(remote.RemoteRefreshError) as excinfo:
+        remote.run(publish_dir=tmp_path / "pub", token_resolver=remote.resolve_token, game_night=expired)
+    assert "APA_USERNAME/APA_PASSWORD" in str(excinfo.value)
+    assert os.environ["APA_ACCESS_TOKEN"] == "outside-token"  # an outside token is never removed
+
+
+def test_fresh_archives_databases_instead_of_deleting(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "apa_tracker.db").write_bytes(b"prod")
+    (data / "apa_tracker_career_staging.db").write_bytes(b"career")
+    (data / "unrelated.db").write_bytes(b"keep")
+
+    target = remote.archive_databases(data)
+
+    assert target is not None and target.parent == data
+    assert not (data / "apa_tracker.db").exists()
+    assert (target / "apa_tracker.db").read_bytes() == b"prod"
+    assert (target / "apa_tracker_career_staging.db").read_bytes() == b"career"
+    assert (data / "unrelated.db").exists()
+    assert remote.archive_databases(data) is None  # nothing left to archive
+
+
+def test_fresh_flag_runs_the_archive_step_before_login(tmp_path, monkeypatch):
+    monkeypatch.delenv("APA_ACCESS_TOKEN", raising=False)
+    order: list[str] = []
+    remote.run(
+        fresh=True, publish_dir=tmp_path / "pub",
+        token_resolver=lambda *a, **kw: order.append("login") or "t",
+        game_night=lambda **kw: order.append("refresh") or _hub(tmp_path),
+        archive=lambda: order.append("archive"),
+    )
+    assert order == ["archive", "login", "refresh"]

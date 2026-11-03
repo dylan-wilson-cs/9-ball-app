@@ -26,6 +26,14 @@ Usage
     python scripts/remote_refresh.py                 # all current teams
     python scripts/remote_refresh.py --our-team-id 13082948
     python scripts/remote_refresh.py --resume        # continue an interrupted refresh
+    python scripts/remote_refresh.py --backfill      # career history first, then refresh
+    python scripts/remote_refresh.py --fresh         # archive the database and rebuild it
+
+Token expiry
+    The APA access token is short-lived and a career backfill can outlast
+    it. When a step fails on an expired token, this logs in again (bounded by
+    --max-logins) and resumes that step, so already-captured scoresheets are
+    never refetched.
 
 Environment
     APA_ACCESS_TOKEN   optional; if set, used as-is and no login happens
@@ -55,6 +63,8 @@ from typing import Callable, Optional
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from scraper.graphql_scraper import AccessTokenExpired, AccessTokenMissing
+from scripts import backfill_career_history as career
 from scripts import run_game_night as launcher
 
 logger = logging.getLogger("remote_refresh")
@@ -74,6 +84,8 @@ CONTINUE_BUTTON_NAME = "Continue"
 
 DEFAULT_LOGIN_TIMEOUT_S = 180.0
 FORM_TIMEOUT_MS = 30_000
+DEFAULT_MAX_LOGINS = 4
+CONFIG_PATH = PROJECT_ROOT / "apa_config.yaml"
 
 # A current desktop Chrome user agent. The headless shell otherwise announces
 # itself as HeadlessChrome, which some login front-ends treat differently.
@@ -293,6 +305,86 @@ def stage_publish_dir(
     return manifest
 
 
+# --- token expiry / re-login -----------------------------------------------------
+
+def is_token_expiry(exc: BaseException) -> bool:
+    """Whether a failure means the APA token died mid-run. The production
+    builder reports its acquisition failures by exception CLASS NAME only
+    (never the payload), so the name is matched in the message too."""
+    if isinstance(exc, (AccessTokenExpired, AccessTokenMissing)):
+        return True
+    text = str(exc)
+    return "AccessTokenExpired" in text or "AccessTokenMissing" in text
+
+
+class _TokenSession:
+    """Holds the in-memory token for this process and re-logs-in on demand.
+
+    APA_ACCESS_TOKEN given from the outside is used once and never
+    "refreshed": a re-login needs the username/password path, so an
+    outside token that expires is a hard stop.
+    """
+
+    def __init__(self, resolver: Callable[..., str], timeout_s: float, max_logins: int):
+        self._resolver = resolver
+        self._timeout_s = timeout_s
+        self._max_logins = max(1, int(max_logins))
+        self.logins = 0
+        self._had_outside_token = bool((os.environ.get("APA_ACCESS_TOKEN") or "").strip())
+
+    def login(self) -> None:
+        if self.logins >= self._max_logins:
+            raise RemoteRefreshError(
+                f"APA token expired again after {self.logins} login(s); giving up "
+                f"(--max-logins {self._max_logins}).", EXIT_LOGIN_FAILED,
+            )
+        if self.logins == 0:
+            token = self._resolver(timeout_s=self._timeout_s)
+        else:
+            if self._had_outside_token:
+                raise RemoteRefreshError(
+                    "The APA_ACCESS_TOKEN given in the environment expired; set a fresh one "
+                    "or provide APA_USERNAME/APA_PASSWORD so the run can log in again.",
+                    EXIT_LOGIN_FAILED,
+                )
+            without_token = {k: v for k, v in os.environ.items() if k != "APA_ACCESS_TOKEN"}
+            token = self._resolver(without_token, timeout_s=self._timeout_s)
+        os.environ["APA_ACCESS_TOKEN"] = token  # this process only; never persisted
+        self.logins += 1
+
+    def close(self) -> None:
+        if not self._had_outside_token:
+            os.environ.pop("APA_ACCESS_TOKEN", None)
+
+    def run_resumable(self, label: str, step: Callable[[bool], object], *, resume: bool):
+        """Run ``step(resume)``; on token expiry log in again and call
+        ``step(True)`` so the step continues from its own checkpoints."""
+        while True:
+            try:
+                return step(resume)
+            except Exception as exc:  # noqa: BLE001 - classified below, re-raised if not expiry
+                if not is_token_expiry(exc):
+                    raise
+                logger.warning("%s: APA token expired mid-run; logging in again and resuming.", label)
+                self.login()
+                resume = True
+
+
+def archive_databases(data_dir: Path = PROJECT_ROOT / "data") -> Optional[Path]:
+    """Move the production and staging databases into a timestamped archive
+    folder so the next refresh rebuilds from the API. Never deletes."""
+    names = ("apa_tracker.db", "apa_tracker_regenerated.db", "apa_tracker_career_staging.db")
+    present = [data_dir / n for n in names if (data_dir / n).is_file()]
+    if not present:
+        return None
+    target = data_dir / f"archive-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    target.mkdir(parents=True)
+    for path in present:
+        shutil.move(str(path), str(target / path.name))
+    logger.info("Archived %d database file(s) to %s", len(present), target)
+    return target
+
+
 # --- main ----------------------------------------------------------------------
 
 def run(
@@ -301,17 +393,41 @@ def run(
     our_team_id: Optional[str] = None,
     publish_dir: Path = DEFAULT_PUBLISH_DIR,
     login_timeout_s: float = DEFAULT_LOGIN_TIMEOUT_S,
+    backfill: bool = False,
+    fresh: bool = False,
+    max_logins: int = DEFAULT_MAX_LOGINS,
     token_resolver: Callable[..., str] = resolve_token,
     game_night: Callable[..., Path] = launcher.run_game_night,
+    career_backfill: Callable[..., dict] = career.run_backfill,
+    archive: Callable[[], Optional[Path]] = archive_databases,
 ) -> dict:
-    token = token_resolver(timeout_s=login_timeout_s)
-    had_token = "APA_ACCESS_TOKEN" in os.environ
-    os.environ["APA_ACCESS_TOKEN"] = token  # this process only; never persisted
+    if fresh:
+        archive()
+
+    session = _TokenSession(token_resolver, login_timeout_s, max_logins)
+    session.login()
     try:
-        dashboard = game_night(resume=resume, open_browser=False, our_team_id=our_team_id)
+        if backfill:
+            logger.info("Career backfill: every historical division this account played in...")
+            report = session.run_resumable(
+                "career backfill",
+                lambda resume_flag: career_backfill(
+                    str(CONFIG_PATH), career.DEFAULT_STAGING_DB, resume=resume_flag, promote=True,
+                ),
+                resume=False,
+            )
+            totals = (report or {}).get("totals") or {}
+            logger.info(
+                "Career backfill promoted: %s division(s), %s scored match(es) with scoresheets.",
+                (report or {}).get("divisions_discovered"), totals.get("scored_matches_with_scoresheet"),
+            )
+        dashboard = session.run_resumable(
+            "game-night refresh",
+            lambda resume_flag: game_night(resume=resume_flag, open_browser=False, our_team_id=our_team_id),
+            resume=resume,
+        )
     finally:
-        if not had_token:
-            os.environ.pop("APA_ACCESS_TOKEN", None)
+        session.close()
     manifest = stage_publish_dir(dashboard, publish_dir, our_team_id=our_team_id)
     logger.info("Published %d team dashboard(s) to %s", len(manifest["teams"]), publish_dir)
     for team in manifest["teams"]:
@@ -329,6 +445,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--login-timeout", type=float, default=DEFAULT_LOGIN_TIMEOUT_S,
         help="Seconds to wait after submitting credentials for an authorized GraphQL call.",
     )
+    parser.add_argument(
+        "--backfill", action="store_true",
+        help="First run the career-history backfill (every past division this account played in) "
+             "and promote it, then do the normal refresh on top of it.",
+    )
+    parser.add_argument(
+        "--fresh", action="store_true",
+        help="Move the production and staging databases into data/archive-<timestamp>/ first, so "
+             "the run rebuilds everything from the API. Nothing is deleted.",
+    )
+    parser.add_argument(
+        "--max-logins", type=int, default=DEFAULT_MAX_LOGINS,
+        help="How many times to log in again when the short-lived APA token expires mid-run.",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -337,6 +467,9 @@ def main(argv: Optional[list[str]] = None) -> int:
             our_team_id=args.our_team_id,
             publish_dir=Path(args.publish_dir),
             login_timeout_s=args.login_timeout,
+            backfill=args.backfill,
+            fresh=args.fresh,
+            max_logins=args.max_logins,
         )
     except RemoteRefreshError as exc:
         logger.error("REMOTE REFRESH FAILED: %s", exc)
@@ -347,6 +480,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     except (launcher.production_builder.BuildError, launcher.cockpit_builder.BuildError) as exc:
         logger.error("REMOTE REFRESH FAILED: %s", exc)
         return exc.code
+    except career.CareerBackfillError as exc:
+        logger.error("REMOTE REFRESH FAILED (career backfill): %s", exc)
+        return launcher.EXIT_VERIFY
     except KeyboardInterrupt:
         logger.error("interrupted")
         return launcher.EXIT_INTERRUPT
