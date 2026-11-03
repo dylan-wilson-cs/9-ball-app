@@ -506,3 +506,42 @@ def test_fresh_flag_runs_the_archive_step_before_login(tmp_path, monkeypatch):
         archive=lambda: order.append("archive"),
     )
     assert order == ["archive", "login", "refresh"]
+
+
+# --- team analytics alongside the cockpit ------------------------------------------
+
+def test_run_builds_team_analytics_per_team_into_the_publish_dir(tmp_path, monkeypatch):
+    monkeypatch.delenv("APA_ACCESS_TOKEN", raising=False)
+    built: list[tuple[str, str]] = []
+
+    def fake_analytics(db_path, team_id, out_dir):
+        target = out_dir / str(team_id) / "analytics.html"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("<html>analytics " + str(team_id) + "</html>", encoding="utf-8")
+        built.append((str(db_path).rsplit("/", 1)[-1], str(team_id)))
+        return target, {"schema": "team-analytics-v1"}
+
+    manifest = remote.run(
+        publish_dir=tmp_path / "pub", token_resolver=lambda *a, **kw: "t",
+        game_night=lambda **kw: _hub_run(tmp_path / "run", {"111": "Chalk It Up", "222": "Rack Attack"}),
+        analytics_build=fake_analytics,
+    )
+
+    assert built == [("apa_tracker.db", "111"), ("apa_tracker.db", "222")]
+    assert [t["analytics_path"] for t in manifest["teams"]] == ["111/analytics.html", "222/analytics.html"]
+    on_disk = json.loads((tmp_path / "pub" / "manifest.json").read_text(encoding="utf-8"))
+    assert on_disk["teams"][0]["analytics_sha256"] == launcher._sha256(tmp_path / "pub" / "111" / "analytics.html")
+
+
+def test_an_analytics_failure_is_recorded_and_the_cockpit_survives(tmp_path, monkeypatch):
+    monkeypatch.delenv("APA_ACCESS_TOKEN", raising=False)
+
+    def broken(db_path, team_id, out_dir):
+        raise FileNotFoundError("no database")
+
+    manifest = remote.run(
+        publish_dir=tmp_path / "pub", token_resolver=lambda *a, **kw: "t",
+        game_night=lambda **kw: _hub(tmp_path), analytics_build=broken,
+    )
+    assert manifest["teams"][0]["analytics_error"] == "FileNotFoundError: no database"
+    assert (tmp_path / "pub" / "1" / "dashboard.html").is_file()

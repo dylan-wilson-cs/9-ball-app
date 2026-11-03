@@ -41,7 +41,8 @@ Environment
     APA_PASSWORD       APA Member Services password
 
 Output
-    exports/remote/<team_id>/dashboard.html   one self-contained page per team
+    exports/remote/<team_id>/dashboard.html   Coach Cockpit, one self-contained page per team
+    exports/remote/<team_id>/analytics.html   Team Analytics, one self-contained page per team
     exports/remote/manifest.json              team names, build time, source hash
 
     Each dashboard.html is a single file with no external links, so it can be
@@ -65,6 +66,7 @@ if __package__ in (None, ""):
 
 from scraper.graphql_scraper import AccessTokenExpired, AccessTokenMissing
 from scripts import backfill_career_history as career
+from scripts import build_team_analytics as analytics_builder
 from scripts import run_game_night as launcher
 
 logger = logging.getLogger("remote_refresh")
@@ -385,6 +387,27 @@ def archive_databases(data_dir: Path = PROJECT_ROOT / "data") -> Optional[Path]:
     return target
 
 
+def add_team_analytics(
+    manifest: dict, publish_dir: Path, *,
+    analytics_build: Callable[..., tuple[Path, dict]] = analytics_builder.build,
+    db_path: Path = launcher.production_builder.LIVE_PRODUCTION_DB,
+) -> dict:
+    """Build the Team Analytics page for every published team from the
+    promoted production database and record it in the manifest. A team whose
+    analytics build fails keeps its Cockpit; the failure is recorded, never
+    hidden."""
+    publish_dir = publish_dir.resolve()
+    for team in manifest["teams"]:
+        try:
+            html_path, _doc = analytics_build(db_path, team["team_id"], publish_dir)
+            team["analytics_path"] = html_path.resolve().relative_to(publish_dir).as_posix()
+            team["analytics_sha256"] = launcher._sha256(html_path)
+        except Exception as exc:  # noqa: BLE001 - category and message only
+            team["analytics_error"] = f"{type(exc).__name__}: {exc}"
+            logger.error("Team Analytics for %s failed: %s", team["team_name"], team["analytics_error"])
+    return manifest
+
+
 # --- main ----------------------------------------------------------------------
 
 def run(
@@ -400,6 +423,7 @@ def run(
     game_night: Callable[..., Path] = launcher.run_game_night,
     career_backfill: Callable[..., dict] = career.run_backfill,
     archive: Callable[[], Optional[Path]] = archive_databases,
+    analytics_build: Callable[..., tuple[Path, dict]] = analytics_builder.build,
 ) -> dict:
     if fresh:
         archive()
@@ -429,9 +453,11 @@ def run(
     finally:
         session.close()
     manifest = stage_publish_dir(dashboard, publish_dir, our_team_id=our_team_id)
+    add_team_analytics(manifest, publish_dir, analytics_build=analytics_build)
+    (publish_dir.resolve() / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     logger.info("Published %d team dashboard(s) to %s", len(manifest["teams"]), publish_dir)
     for team in manifest["teams"]:
-        logger.info("  %s  %s", team["team_name"], publish_dir / team["path"])
+        logger.info("  %s  %s  %s", team["team_name"], publish_dir / team["path"], publish_dir / team.get("analytics_path", ""))
     return manifest
 
 
