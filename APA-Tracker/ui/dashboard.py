@@ -100,77 +100,111 @@ def render(
 
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>Coach Dashboard — {escape(our_team_name)}</title>
+<title>{escape(our_team_name)} Coach Cockpit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <style>
-body {{ font-family: system-ui, sans-serif; margin: 24px; color: #1c1f24; background: #ffffff; }}
-h2 {{ border-top: 2px solid #1F3864; padding-top: 18px; margin-top: 32px; }}
-input, select, textarea, button {{ max-width: 100%; box-sizing: border-box; }}
-.cd-controls select {{ font-size: 14px; padding: 4px; width: 100%; max-width: 380px;
-  box-sizing: border-box; }}
-#pme-result, #tme-result, #dc-result, #risk-result,
-#mn-comparison, #mn-lineup, #mn-scouting {{ overflow-x: auto; }}
-table {{ border-collapse: collapse; width: 100%; font-size: 13.5px; margin: 8px 0 18px; }}
-th, td {{ padding: 6px 9px; border-bottom: 1px solid #e2e5ea; text-align: left; }}
-.cd-summary-box {{ background: #eef2fa; border-left: 4px solid #1F3864; padding: 10px 14px; }}
-.cd-none {{ background: #fdf6e3; border-left: 4px solid #b58900; padding: 10px 14px; }}
-.cd-note {{ color: #666e7a; font-size: 12.5px; }}
+/* Shared visual system with the Team Analytics page: tokens for both themes,
+   condensed display face on headings, system sans everywhere else. The Coach
+   Cockpit shell (ui/coach_cockpit.py) arranges these same nodes into cards
+   and styles its chrome from these tokens. */
+:root {{
+  --bg: #f4f3ee; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --felt: #1e5c47; --felt-ink: #ffffff;
+  --accent: #2a78d6; --accent-wash: rgba(42,120,214,0.10); --warn-wash: #fdf6e3; --warn: #b58900;
+  --good: #1a7f37; --fallback: #7a3b00; --fallback-wash: #fffaf0; --unknown: #8a919c;
+  --border: rgba(11,11,11,0.10); --display: "Barlow Condensed", "Roboto Condensed", "Arial Narrow", "Helvetica Neue", system-ui, sans-serif;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}}
+@media (prefers-color-scheme: dark) {{
+  :root:not([data-theme="light"]) {{
+    --bg: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --felt: #17493a; --felt-ink: #f0efec;
+    --accent: #3987e5; --accent-wash: rgba(57,135,229,0.16); --warn-wash: #2a2410; --warn: #d9a21b;
+    --good: #2fa84a; --fallback: #c9742f; --fallback-wash: #2a1d12; --unknown: #8a919c;
+    --border: rgba(255,255,255,0.10); color-scheme: dark;
+  }}
+}}
+:root[data-theme="dark"] {{
+  --bg: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --felt: #17493a; --felt-ink: #f0efec;
+  --accent: #3987e5; --accent-wash: rgba(57,135,229,0.16); --warn-wash: #2a2410; --warn: #d9a21b;
+  --good: #2fa84a; --fallback: #c9742f; --fallback-wash: #2a1d12; --unknown: #8a919c;
+  --border: rgba(255,255,255,0.10); color-scheme: dark;
+}}
+* {{ box-sizing: border-box; }}
+body {{ margin: 0; font: 15px/1.45 var(--sans); color: var(--ink); background: var(--bg); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 16px 40px; }}
+h1 {{ font: 700 clamp(30px, 5vw, 44px)/0.95 var(--display); margin: 0 0 8px; text-wrap: balance; }}
+h2 {{ font: 600 26px/1.05 var(--display); margin: 34px 0 6px; letter-spacing: 0.01em; text-wrap: balance; }}
+h2 + .cd-note, h2 + .cd-controls + .cd-note {{ max-width: 70ch; }}
+h3 {{ font: 600 20px/1.1 var(--display); margin: 18px 0 6px; }}
+h4 {{ font: 600 15px/1.3 var(--sans); margin: 14px 0 6px; }}
+h5 {{ font: 600 13px/1.3 var(--sans); margin: 12px 0 4px; color: var(--ink-2); }}
+code {{ font-size: 0.9em; color: var(--ink-2); }}
+input, select, textarea, button {{ max-width: 100%; box-sizing: border-box; font: inherit; color: var(--ink); }}
+select, input[type="number"], textarea {{ background: var(--surface); border: 1px solid var(--axis); border-radius: 4px; padding: 6px 8px; }}
+button {{ background: var(--surface); border: 1px solid var(--axis); border-radius: 4px; padding: 8px 14px; cursor: pointer; }}
+button:hover {{ border-color: var(--ink-2); }}
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, a:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
+.mn-send-btn {{ background: var(--felt); color: var(--felt-ink); border-color: transparent; font-weight: 600; }}
+.cd-controls {{ display: flex; gap: 12px 18px; flex-wrap: wrap; align-items: center; margin: 8px 0; }}
+.cd-controls label {{ display: inline-flex; gap: 6px; align-items: center; font-size: 13.5px; color: var(--ink-2); }}
+.cd-controls select {{ font-size: 14px; width: auto; min-width: 180px; max-width: 100%; }}
+.cd-controls .cd-note {{ flex-basis: 100%; margin: 0; }}
+#pme-result, #tme-result, #dc-result, #risk-result, #mn-comparison, #mn-lineup, #mn-scouting, #mn-roster {{ overflow-x: auto; }}
+#pme-result, #tme-result, #risk-result, #mn-roster, #mn-lineup {{ background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; margin-top: 10px; }}
+#pme-result:empty, #tme-result:empty, #mn-roster:empty, #mn-lineup:empty, #mn-comparison:empty, #mn-scouting:empty {{ display: none; }}
+table {{ border-collapse: collapse; width: 100%; font-size: 13.5px; margin: 6px 0 14px; }}
+th, td {{ padding: 6px 9px; border-bottom: 1px solid var(--grid); text-align: left; vertical-align: top; }}
+th {{ font-weight: 600; color: var(--ink-2); font-size: 12.5px; }}
+tbody tr:hover td {{ background: var(--accent-wash); }}
+.cd-summary-box {{ background: var(--accent-wash); border-left: 4px solid var(--accent); padding: 10px 14px; border-radius: 0 4px 4px 0; }}
+.cd-none {{ background: var(--warn-wash); border-left: 4px solid var(--warn); padding: 10px 14px; border-radius: 0 4px 4px 0; }}
+.cd-note {{ color: var(--ink-2); font-size: 12.5px; }}
 .cd-cols {{ display: flex; gap: 24px; flex-wrap: wrap; }}
 .cd-cols > div {{ flex: 1; min-width: 280px; }}
-.cd-filters {{ display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
-  background: #f4f6fa; border: 1px solid #e2e5ea; border-radius: 4px;
-  padding: 8px 12px; margin: 10px 0; font-size: 13px; }}
-.cd-filters label {{ display: inline-flex; align-items: center; gap: 4px; }}
-.cd-filters input[type="number"] {{ width: 48px; }}
-.cd-spark {{ vertical-align: middle; margin-left: 6px; }}
-.cd-edge-card {{ background: #eef2fa; border: 1px solid #1F3864; border-radius: 4px;
-  padding: 10px 14px; margin: 8px 0 18px; }}
+.cd-filters {{ display: flex; gap: 12px 16px; flex-wrap: wrap; align-items: center; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; margin: 10px 0; font-size: 13px; }}
+.cd-filters label {{ display: inline-flex; align-items: center; gap: 5px; color: var(--ink-2); }}
+.cd-filters input[type="number"] {{ width: 52px; padding: 4px 6px; }}
+.cd-spark {{ vertical-align: middle; margin-left: 6px; --spark: var(--accent); }}
+.cd-edge-card {{ background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--felt); border-radius: 6px; padding: 12px 16px; margin: 10px 0 18px; }}
 .cd-edge-card h3 {{ margin-top: 0; }}
-.mn-roster-row {{ display: flex; align-items: center; gap: 10px; padding: 6px 4px;
-  border-bottom: 1px solid #e2e5ea; flex-wrap: wrap; }}
-.mn-roster-row select {{ font-size: 15px; padding: 6px; }}
+.mn-roster-row {{ display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-bottom: 1px solid var(--grid); flex-wrap: wrap; }}
+.mn-roster-row select {{ font-size: 15px; padding: 6px 8px; }}
 .mn-roster-name {{ min-width: 140px; font-weight: 600; }}
-.mn-card {{ border: 1px solid #e2e5ea; border-radius: 6px; padding: 12px 14px;
-  margin: 10px 0; background: #fff; }}
-.mn-card.mn-ok {{ border-left: 5px solid #1a7f37; }}
-.mn-card.mn-fallback {{ border-left: 5px solid #7a3b00; background: #fffaf0; }}
-.mn-card.mn-warn {{ border-left: 5px solid #b58900; }}
-.mn-card.mn-unknown {{ border-left: 5px solid #8a919c; }}
+.mn-card {{ border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; margin: 10px 0; background: var(--surface); }}
+.mn-card.mn-ok {{ border-left: 5px solid var(--good); }}
+.mn-card.mn-fallback {{ border-left: 5px solid var(--fallback); background: var(--fallback-wash); }}
+.mn-card.mn-warn {{ border-left: 5px solid var(--warn); }}
+.mn-card.mn-unknown {{ border-left: 5px solid var(--unknown); }}
 .mn-card h4 {{ margin: 0 0 4px; }}
 .mn-send-btn {{ font-size: 16px; padding: 10px 18px; margin-top: 6px; min-height: 44px; }}
 .mn-status-line {{ font-weight: 600; }}
 #mn-warning .cd-none {{ font-weight: 600; }}
 .mn-print-only {{ display: none; }}
-#mn-scope, #mn-match, #mn-opponent, .mn-status-select {{
-  font-size: 16px; padding: 10px; min-height: 44px;
-}}
-#mn-reset, #mn-print, #mn-undo-btn, .mn-undo-btn, #mn-scouting-notes-save {{
-  font-size: 15px; padding: 10px 16px; min-height: 44px;
-}}
-.mn-sticky {{ position: sticky; top: 0; z-index: 5; background: #1F3864; color: #fff;
-  padding: 10px 14px; margin: 10px 0; border-radius: 4px; font-size: 15px;
-  display: flex; gap: 18px; flex-wrap: wrap; align-items: center; }}
-.mn-sticky strong {{ font-size: 17px; }}
-.mn-sticky.mn-sticky-warn {{ background: #7a3b00; }}
-.mn-technical {{ color: #666e7a; font-size: 12.5px; margin-top: 4px; }}
+#mn-scope, #mn-match, #mn-opponent, .mn-status-select {{ font-size: 16px; padding: 10px; min-height: 44px; }}
+#mn-reset, #mn-print, #mn-undo-btn, .mn-undo-btn, #mn-scouting-notes-save {{ font-size: 15px; padding: 10px 16px; min-height: 44px; }}
+.mn-sticky {{ position: sticky; top: calc(env(safe-area-inset-top, 0px) + 44px); z-index: 5; background: var(--felt); color: var(--felt-ink); padding: 10px 14px; margin: 10px 0; border-radius: 6px; font-size: 15px; display: flex; gap: 18px; flex-wrap: wrap; align-items: center; }}
+.mn-sticky:empty {{ display: none; }}
+.mn-sticky strong {{ font-size: 17px; font-family: var(--display); font-weight: 600; letter-spacing: 0.02em; }}
+.mn-sticky.mn-sticky-warn {{ background: var(--fallback); color: #fff; }}
+.mn-technical {{ color: var(--muted); font-size: 12.5px; margin-top: 4px; }}
 .mn-technical summary {{ cursor: pointer; }}
-.mn-scouting-card {{ border: 1px solid #1F3864; border-radius: 6px; padding: 12px 14px;
-  margin: 10px 0; background: #f4f6fa; }}
-.mn-scouting-card h2 {{ margin: 0 0 4px; border-top: none; padding-top: 0; font-size: 20px; }}
+.mn-scouting-card {{ border: 1px solid var(--border); border-top: 3px solid var(--felt); border-radius: 6px; padding: 12px 14px; margin: 10px 0; background: var(--surface); }}
+.mn-scouting-card h2 {{ margin: 0 0 4px; font-size: 22px; }}
 .mn-scouting-card h5 {{ margin: 14px 0 4px; }}
-#mn-scouting-notes {{ font-size: 16px; padding: 10px; width: 100%; box-sizing: border-box;
-  font-family: inherit; }}
+#mn-scouting-notes {{ font-size: 16px; padding: 10px; width: 100%; box-sizing: border-box; font-family: inherit; min-height: 88px; }}
 #mn-scouting-notes-status {{ margin-left: 8px; }}
 @media (max-width: 600px) {{
-  body {{ margin: 12px; }}
   .cd-cols > div {{ min-width: 0; }}
   .mn-sticky > span {{ min-width: 0; overflow-wrap: anywhere; }}
+  .cd-controls select {{ width: 100%; }}
 }}
 @media print {{
   body * {{ display: none !important; }}
   #mn-print-summary, #mn-print-summary * {{ display: revert !important; }}
 }}
 </style></head><body>
-<h1>Coach Dashboard — {escape(our_team_name)}</h1>
+<h1>{escape(our_team_name)}</h1>
 <p class="cd-note">Every number on this page traces to
 <code>analytics.pairing_evidence</code>, the validated
 <code>analytics.head_to_head.skill_only_win_probability</code>, or
@@ -178,17 +212,17 @@ th, td {{ padding: 6px 9px; border-bottom: 1px solid #e2e5ea; text-align: left; 
 win-probability model, no invented danger threshold, no categorical
 verdict -- see <code>docs/captain_first_edge_experience.md</code> §13.
 "Trend" below is a direction + volatility count plus a real plotted
-sparkline of the player's whole skill-level history.</p>
+sparkline of the player's skill-level history in this format.</p>
 
-<h2>Player vs Player</h2>
+<h2 id="player-vs-player">Player vs Player</h2>
 <div class="cd-controls">
 <label>Your player: <select id="pme-player">{player_options}</select></label>
 &nbsp;
 <label>Opposing team: <select id="pme-opponent-team"></select></label>
 &nbsp;
 <label>Opponent player: <select id="pme-opponent"></select></label>
-</div>
 <p class="cd-note">Choose your player, then the opposing team, then the opposing player. Head-to-head is the real direct record captured for that exact pairing and scope; no direct history is shown explicitly rather than inferred.</p>
+</div>
 <div class="cd-filters">
 <strong>Opponent filters:</strong>
 <label>SL min <input type="number" id="pme-filter-sl-min" min="0" max="9"></label>
@@ -201,13 +235,13 @@ sparkline of the player's whole skill-level history.</p>
 </div>
 <div id="pme-result"></div>
 
-<h2>Team vs Team</h2>
+<h2 id="team-vs-team">Team vs Team</h2>
 <div class="cd-controls">
 <label>Match: <select id="tme-scope">{scope_options}</select></label>
 </div>
 <div id="tme-result"></div>
 
-<h2 class="mn-screen-only">Match Night</h2>
+<h2 id="match-night" class="mn-screen-only">Match Night</h2>
 <p class="cd-note mn-screen-only">"They put up this player -- who should I send?" Confirm
 tonight's scheduled match and who's available, pick the opponent's announced player, and
 compare your legal options side by side. The normal APA path is five players totaling 23
@@ -238,8 +272,8 @@ not necessarily when the underlying data was last synced from the league portal.
 <div id="mn-lineup" class="mn-screen-only"></div>
 <div id="mn-print-summary" class="mn-print-only"></div>
 
-<h2>Opponent Risk Profile (whole-division, purely descriptive ranking)</h2>
-<p class="cd-note">Ranked by reliability-weighted skill-only probability,
+<h2 id="risk">Opponent Risk Profile</h2>
+<p class="cd-note">Whole division, purely descriptive: ranked by reliability-weighted skill-only probability,
 toughest first -- never a categorical "danger" label
 (<code>analytics.opponent_risk_profile</code>).</p>
 <div id="risk-result"><table><thead><tr><th>Opponent</th><th>Direct pairings</th>
@@ -292,7 +326,7 @@ toughest first -- never a categorical "danger" label
     return "<svg class='cd-spark' width='" + w + "' height='" + h + "' viewBox='0 0 " + w + " " + h
          + "' role='img' aria-label='Skill level trend sparkline: " + title + "'>"
          + "<title>" + title + "</title>"
-         + "<polyline points='" + points + "' fill='none' stroke='#1F3864' stroke-width='1.5'/></svg>";
+         + "<polyline points='" + points + "' fill='none' style='stroke:var(--spark)' stroke-width='2' stroke-linejoin='round' stroke-linecap='round'/></svg>";
   }}
   function trendBadge(t) {{
     var arrow = {{"up": "\\u25b2", "down": "\\u25bc", "stable": "\\u25ac"}}[t.trend] || "?";

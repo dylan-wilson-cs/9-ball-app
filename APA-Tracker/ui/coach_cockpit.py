@@ -70,121 +70,59 @@ def _coverage_sections(
 
 _COCKPIT_CHROME = r"""
 <style id="coach-cockpit-demo-layout">
-:root {
-  --cc-bg: #0d1117;
-  --cc-panel: #161b22;
-  --cc-panel-2: #1f2630;
-  --cc-line: #30363d;
-  --cc-text: #f0f6fc;
-  --cc-muted: #9da7b3;
-  --cc-blue: #58a6ff;
-  --cc-green: #3fb950;
-  --cc-yellow: #d29922;
-  --cc-red: #f85149;
-}
-body.cc-ready {
-  margin: 0;
-  background: var(--cc-bg);
-  color: var(--cc-text);
-  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
-}
-body.cc-ready h1, body.cc-ready h2, body.cc-ready h3, body.cc-ready h4,
-body.cc-ready h5 { color: var(--cc-text); }
-body.cc-ready h2 { border-top: 0; padding-top: 0; margin-top: 0; }
-body.cc-ready a { color: var(--cc-blue); }
-body.cc-ready .cd-note, body.cc-ready .mn-technical, body.cc-ready .dc-sub,
-body.cc-ready .dc-unavailable { color: var(--cc-muted); }
-body.cc-ready select, body.cc-ready input, body.cc-ready textarea {
-  background: #0d1117; color: var(--cc-text); border: 1px solid var(--cc-line);
-  border-radius: 8px; padding: 10px;
-}
-body.cc-ready button {
-  background: #21262d; color: var(--cc-text); border: 1px solid var(--cc-line);
-  border-radius: 8px; padding: 10px 14px; cursor: pointer;
-}
-body.cc-ready button:hover { border-color: #6e7681; }
-body.cc-ready table { color: var(--cc-text); }
-body.cc-ready th, body.cc-ready td { border-bottom-color: var(--cc-line); }
-body.cc-ready th { color: var(--cc-muted); }
-body.cc-ready .cd-summary-box, body.cc-ready .cd-edge-card,
-body.cc-ready .mn-scouting-card {
-  background: #111820; border-color: #253142; color: var(--cc-text);
-}
-body.cc-ready .cd-none { background: #2b2412; border-left-color: var(--cc-yellow); color: var(--cc-text); }
-body.cc-ready .mn-card { background: #11161d; border-color: var(--cc-line); }
-body.cc-ready .mn-card.mn-fallback { background: #2b2112; }
-
+/* Cockpit chrome: felt top bar, two-column card grid, both themes via the
+   base page's tokens (--felt, --surface, --ink ...). Presentation only. */
+body.cc-ready { margin: 0; padding: 0; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--felt); }
 #coach-cockpit-shell { min-height: 100vh; }
-.cc-topbar {
-  position: sticky; top: 0; z-index: 20; background: rgba(13,17,23,.96);
-  border-bottom: 1px solid var(--cc-line); backdrop-filter: blur(8px);
-}
-.cc-topbar-inner, .cc-wrap { max-width: 1180px; margin: 0 auto; padding: 18px; }
-.cc-topbar-inner { display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
-.cc-topbar h1 { margin: 0; font-size: 24px; }
-.cc-kicker { color: var(--cc-muted); font-size: 13px; margin-top: 4px; }
-.cc-live-badge {
-  border: 1px solid var(--cc-line); border-radius: 999px; padding: 7px 11px;
-  background: var(--cc-panel); color: var(--cc-green); font-size: 12px; font-weight: 700;
-}
+.cc-topbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: var(--felt); color: var(--felt-ink); }
+.cc-topbar-inner, .cc-wrap, .cc-advanced { max-width: 1180px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.cc-topbar-inner { padding-block: 12px; display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
+.cc-wrap { padding-block: 18px 8px; }
+.cc-advanced { padding-block: 0 32px; }
+.cc-topbar h1 { margin: 0; font: 700 clamp(26px, 4vw, 34px)/1 var(--display); color: var(--felt-ink); letter-spacing: 0.01em; }
+.cc-kicker { color: var(--felt-ink); opacity: 0.8; font-size: 12.5px; margin-top: 4px; }
+.cc-live-badge { border: 1px solid rgba(255,255,255,0.35); border-radius: 999px; padding: 6px 11px; color: var(--felt-ink); font: 600 11.5px/1 var(--sans); letter-spacing: 0.1em; text-transform: uppercase; }
 .cc-grid { display: grid; grid-template-columns: minmax(0, 1.18fr) minmax(320px, .82fr); gap: 16px; align-items: start; }
 .cc-main, .cc-aside { min-width: 0; }
-.cc-card {
-  background: var(--cc-panel); border: 1px solid var(--cc-line); border-radius: 14px;
-  padding: 16px; margin-bottom: 16px; box-shadow: 0 7px 24px rgba(0,0,0,.16);
-}
+.cc-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; min-width: 0; }
 .cc-card > h2:first-child { margin-top: 0; }
 .cc-card .cd-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
 .cc-card .cd-controls label { flex: 1 1 240px; }
 .cc-card .cd-controls select { max-width: none; width: 100%; }
-.cc-card .cd-filters { background: var(--cc-panel-2); border-color: var(--cc-line); border-radius: 10px; }
-.cc-card .mn-sticky {
-  position: static; display: grid; grid-template-columns: repeat(2, minmax(0,1fr));
-  gap: 10px; background: transparent; padding: 0; margin: 14px 0; color: var(--cc-text);
-}
-.cc-card .mn-sticky > span {
-  min-width: 0; background: var(--cc-panel-2); border: 1px solid var(--cc-line);
-  border-radius: 10px; padding: 12px; overflow-wrap: anywhere;
-}
-.cc-card .mn-sticky > span:first-child { grid-column: 1 / -1; color: var(--cc-blue); }
-.cc-card .mn-sticky.mn-sticky-warn > span:last-child { border-color: #7a3b00; background: #2b2112; }
+.cc-card #pme-result, .cc-card #tme-result, .cc-card #risk-result, .cc-card #mn-roster, .cc-card #mn-lineup { border: 0; padding: 0; background: transparent; margin-top: 8px; }
+.cc-card .mn-sticky { position: static; display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; background: transparent; padding: 0; margin: 14px 0; color: var(--ink); border-radius: 0; }
+.cc-card .mn-sticky > span { min-width: 0; background: var(--accent-wash); border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow-wrap: anywhere; }
+.cc-card .mn-sticky > span:first-child { grid-column: 1 / -1; }
+.cc-card .mn-sticky.mn-sticky-warn > span:last-child { border-color: var(--fallback); background: var(--fallback-wash); }
 .cc-card .mn-sticky strong { font-size: 22px; }
 .cc-card #mn-roster { margin-top: 10px; }
-.cc-card .mn-roster-row { border-bottom-color: var(--cc-line); }
 .cc-card .mn-roster-row select { margin-left: auto; }
-.cc-card #mn-comparison .mn-card { border-radius: 10px; }
-.cc-card #mn-comparison .mn-send-btn { background: #1f6feb; border-color: #1f6feb; }
+.cc-card #mn-comparison .mn-card { border-radius: 6px; }
 .cc-card #mn-lineup { overflow-x: auto; }
 .cc-aside #mn-scouting { margin-bottom: 16px; }
 .cc-aside #mn-scouting:empty { display: none; }
-.cc-aside .mn-scouting-card { margin: 0 0 16px; border-radius: 12px; }
-.cc-aside .cd-edge-card { border-radius: 12px; margin-bottom: 0; }
+.cc-aside .mn-scouting-card { margin: 0 0 16px; }
+.cc-aside .cd-edge-card { margin-bottom: 0; }
 .cc-coverage-card .dc-cockpit-section { margin-top: 0; }
 .cc-coverage-card .dc-cockpit-section > h2 { display: none; }
-.cc-coverage-card .dc-embedded { border: 1px solid var(--cc-line); border-radius: 10px; padding: 0 10px; }
-.cc-coverage-card .dc-embedded > summary { color: var(--cc-text); }
+.cc-coverage-card .dc-embedded { border: 1px solid var(--border); border-radius: 6px; padding: 0 10px; }
 .cc-coverage-card .dc-tab h2 { font-size: 18px; }
-.cc-advanced { max-width: 1180px; margin: 0 auto; padding: 0 18px 24px; }
-.cc-advanced details { background: var(--cc-panel); border: 1px solid var(--cc-line); border-radius: 14px; padding: 12px 16px; }
-.cc-advanced summary { cursor: pointer; font-weight: 700; }
+.cc-advanced details { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; }
+.cc-advanced summary { cursor: pointer; font: 600 18px/1.2 var(--display); }
 .cc-advanced-body { margin-top: 14px; }
 body.cc-ready .dc-embedded { overflow-x: auto; }
-
 @media (max-width: 820px) {
   .cc-grid { grid-template-columns: 1fr; }
-  .cc-topbar-inner, .cc-wrap, .cc-advanced { padding-left: 12px; padding-right: 12px; }
   .cc-card .mn-sticky { grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
 @media (max-width: 520px) {
   .cc-card { padding: 12px; }
-  .cc-card .mn-sticky { grid-template-columns: 1fr 1fr; }
   .cc-card .mn-sticky > span:first-child { grid-column: 1 / -1; }
   .cc-card .cd-controls { display: block; }
   .cc-card .cd-controls > * { display: block; margin: 8px 0; }
 }
-@media print {
-  .cc-topbar, .cc-wrap, .cc-advanced { display: none !important; }
-}
+@media print { .cc-topbar, .cc-wrap, .cc-advanced { display: none !important; } }
 </style>
 <script id="coach-cockpit-demo-layout-script">
 (function () {
@@ -227,7 +165,7 @@ body.cc-ready .dc-embedded { overflow-x: auto; }
   var topInner = make('div', 'cc-topbar-inner');
   var brand = make('div');
   brand.appendChild(title);
-  var kicker = make('div', 'cc-kicker', 'One-stop captain view: Match Night + matchup evidence + data coverage');
+  var kicker = make('div', 'cc-kicker', 'Match Night, matchup evidence and data coverage in one view');
   brand.appendChild(kicker);
   if (intro) intro.style.display = 'none';
   topInner.appendChild(brand);

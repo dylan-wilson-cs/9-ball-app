@@ -298,18 +298,22 @@ def _write_team_hub(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>APA Coach Cockpit — My Teams</title>
 <style>
-:root {{ color-scheme: dark; font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }}
+:root {{ --bg: #f4f3ee; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --grid: #e1e0d9; --axis: #c3c2b7; --felt: #1e5c47; --felt-ink: #ffffff; --accent: #2a78d6;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }}
+@media (prefers-color-scheme: dark) {{ :root:not([data-theme="light"]) {{ --bg: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --grid: #2c2c2a; --axis: #383835; --felt: #17493a; --felt-ink: #f0efec; --accent: #3987e5; color-scheme: dark; }} }}
+:root[data-theme="dark"] {{ --bg: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --grid: #2c2c2a; --axis: #383835; --felt: #17493a; --felt-ink: #f0efec; --accent: #3987e5; color-scheme: dark; }}
 * {{ box-sizing: border-box; }}
-html, body {{ margin: 0; height: 100%; background: #0d1117; color: #f0f6fc; }}
+html, body {{ margin: 0; height: 100%; background: var(--bg); color: var(--ink); }}
 .team-hub {{ height: 100%; display: grid; grid-template-rows: auto 1fr; }}
-.team-bar {{ display: flex; gap: 14px; align-items: center; flex-wrap: wrap; padding: 12px 16px;
-  background: #161b22; border-bottom: 1px solid #30363d; }}
-.team-bar strong {{ font-size: 18px; }}
-.team-bar label {{ display: flex; align-items: center; gap: 8px; font-weight: 700; }}
-.team-bar select {{ min-width: min(520px, 76vw); max-width: 100%; background: #0d1117; color: #f0f6fc;
-  border: 1px solid #30363d; border-radius: 8px; padding: 9px 12px; }}
-.team-note {{ color: #9da7b3; font-size: 12px; }}
-iframe {{ width: 100%; height: 100%; border: 0; background: #0d1117; }}
+.team-bar {{ display: flex; gap: 14px; align-items: center; flex-wrap: wrap; padding: 10px max(16px, env(safe-area-inset-right, 0px)) 10px max(16px, env(safe-area-inset-left, 0px));
+  background: var(--felt); color: var(--felt-ink); }}
+.team-bar strong {{ font-size: 18px; letter-spacing: 0.02em; }}
+.team-bar label {{ display: flex; align-items: center; gap: 8px; font-weight: 600; }}
+.team-bar select {{ min-width: min(520px, 76vw); max-width: 100%; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--axis); border-radius: 6px; padding: 9px 12px; font: inherit; }}
+.team-bar select:focus-visible {{ outline: 2px solid var(--felt-ink); outline-offset: 2px; }}
+.team-note {{ color: var(--felt-ink); opacity: 0.8; font-size: 12px; }}
+iframe {{ width: 100%; height: 100%; border: 0; background: var(--bg); }}
 @media (max-width: 620px) {{
   .team-bar {{ align-items: stretch; }}
   .team-bar label {{ display: block; width: 100%; }}
