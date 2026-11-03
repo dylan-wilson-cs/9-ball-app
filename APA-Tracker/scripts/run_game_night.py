@@ -451,12 +451,18 @@ def run_game_night(
     viewer_team_ids = [team["team_id"] for team in viewer_teams]
 
     logger.info("1/4 Refreshing APA data into a staging database...")
+    # The staging build's own documents need one real team as their scope.
+    # Use a team this account actually plays on right now, not whatever
+    # apa_config.yaml's team.team_id happens to say -- that value can lag a
+    # season behind, and a team absent from the fresh data would make the
+    # live scope selection fail after a complete acquisition.
     production_builder.run_build(
         "live",
         demo_run,
         DEMO_RUN_ROOT,
         promote=False,
         resume=resume,
+        our_team_id=viewer_team_ids[0] if viewer_team_ids else None,
     )
 
     if not LIVE_STAGING_DB.is_file() or LIVE_STAGING_DB.stat().st_size == 0:

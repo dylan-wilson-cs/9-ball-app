@@ -296,6 +296,9 @@ def test_multi_team_hub_builds_all_owned_teams_and_defaults_nearest(tmp_path, mo
     def fake_production_build(mode, run_dir, run_root, promote=False, resume=False, **kwargs):
         assert mode == "live"
         assert promote is False
+        # The staging build's live scope must be anchored on a team this
+        # account actually plays on now, never left to apa_config.yaml.
+        assert kwargs.get("our_team_id") == "13082718"
         events.append("refresh")
         with sqlite3.connect(staging_db) as conn:
             conn.execute(

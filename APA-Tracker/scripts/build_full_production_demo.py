@@ -747,6 +747,7 @@ def run_build(
     opponent_team_id: Optional[str] = None,
     session_name: Optional[str] = None,
     format_name: Optional[str] = None,
+    our_team_id: Optional[str] = None,
 ) -> Path:
     events = events or EventSink(None)
     phases: list[PhaseResult] = [preflight(run_dir, run_root)]
@@ -773,7 +774,7 @@ def run_build(
         scope = (
             dict(FIXTURE_SCOPE)
             if mode == "fixture"
-            else _live_scope(db, opponent_team_id, session_name, format_name)
+            else _live_scope(db, opponent_team_id, session_name, format_name, our_team_id=our_team_id)
         )
         phases.append(build_documents(db, db_path, scope, staging))
         reconciliation = _reconciliation(db, scope)
@@ -835,6 +836,7 @@ def _live_scope(
     opponent_team_id: Optional[str] = None,
     session_name: Optional[str] = None,
     format_name: Optional[str] = None,
+    our_team_id: Optional[str] = None,
 ) -> dict:
     """A real (opponent, session, format) scope, chosen from what was
     actually ingested -- never a fixture constant, and never a guess.
@@ -855,13 +857,20 @@ def _live_scope(
     happens to sort first. The same roster-resolution guard still applies:
     a pinned scope with no real match, or with either side unable to
     resolve a canonical current roster, is refused rather than guessed.
+
+    ``our_team_id`` names the team the scope is built around. Callers that
+    have already discovered the account's real current teams (the
+    game-night launcher) pass one of those; otherwise apa_config.yaml's
+    team.team_id is used, which only works while that config value is a
+    team present in the ingested data.
     """
     from scripts.build_captain_first_edge import _configured_our_team_id
 
-    our_team_id = _configured_our_team_id()
+    our_team_id = str(our_team_id) if our_team_id else _configured_our_team_id()
     if not our_team_id:
         raise BuildError(
-            "live mode needs team.team_id in apa_config.yaml to select a scope",
+            "live mode needs team.team_id in apa_config.yaml (or an explicit our team id) "
+            "to select a scope",
             EXIT_PREFLIGHT,
         )
 

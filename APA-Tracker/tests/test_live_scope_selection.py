@@ -76,6 +76,29 @@ class TestLiveScopeSelection:
 
         assert scope["opponent_team_id"] == OPPONENT  # week 1, not week 2
 
+    def test_an_explicit_our_team_id_overrides_the_configured_one(self, db):
+        """Observed live: apa_config.yaml still named a prior season's team,
+        absent from the freshly ingested data, so auto-selection found no
+        candidates after a complete acquisition. The launcher knows the
+        account's real current teams and passes one explicitly."""
+        current_team = "13117798"
+        db.add(Match(
+            external_id="M1", home_team_id=current_team, away_team_id=OPPONENT,
+            is_bye=False, session_name=SESSION, format=FORMAT_NAME, week=1,
+        ))
+        _roster(db, current_team, SESSION)
+        _roster(db, OPPONENT, SESSION)
+        db.flush()
+
+        with pytest.raises(BuildError, match="no real matches found"):
+            _live_scope(db)  # configured OUR_TEAM has no matches here
+
+        scope = _live_scope(db, our_team_id=current_team)
+        assert scope == {
+            "our_team_id": current_team, "opponent_team_id": OPPONENT,
+            "session_name": SESSION, "format": FORMAT_NAME,
+        }
+
     def test_a_bye_is_never_a_candidate(self, db):
         db.add(Match(external_id="MBYE", home_team_id=OUR_TEAM, away_team_id=None,
                       is_bye=True, session_name=SESSION, format=FORMAT_NAME, week=1))
