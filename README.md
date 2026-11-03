@@ -56,10 +56,13 @@ bash APA-Tracker/setup_remote.sh
 ```
 
 The script creates `APA-Tracker/.venv`, installs the pinned lock
-(`requirements-dev.txt`), and makes a Chromium build available to Playwright.
-When the environment's network policy blocks `cdn.playwright.dev`, it maps the
-container's preinstalled Chromium onto the expected revision in
-`APA-Tracker/.pw-browsers` and tells you to export `PLAYWRIGHT_BROWSERS_PATH`.
+(`requirements-dev.txt`), and puts the Chromium build Playwright expects in
+`APA-Tracker/.pw-browsers` (gitignored). It downloads the exact pinned
+revision from `cdn.playwright.dev`; if the environment's network policy blocks
+that host, it falls back to mapping the container's preinstalled Chromium onto
+the expected revision. Either way, export
+`PLAYWRIGHT_BROWSERS_PATH="$PWD/APA-Tracker/.pw-browsers"` before running
+pytest.
 
 To run it automatically for every new session, add this line to the cloud
 environment's Setup script:
