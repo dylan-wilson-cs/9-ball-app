@@ -73,3 +73,35 @@ cd 9-ball-app && bash APA-Tracker/setup_remote.sh
 
 Credentials (`APA_USERNAME`, `APA_PASSWORD`, `APA_ACCESS_TOKEN`) go in the
 environment's secrets, never in the repo.
+
+### Remote access to the dashboards
+
+APA-Tracker has no server mode; its output is static, self-contained HTML.
+Remote access therefore means: refresh the data in a cloud session, then
+publish the resulting dashboard files somewhere you can open from a phone or
+any browser (for example as a private claude.ai artifact).
+
+The refresh step is unattended:
+
+```bash
+cd APA-Tracker
+source .venv/bin/activate
+export PLAYWRIGHT_BROWSERS_PATH="$PWD/.pw-browsers"
+python scripts/remote_refresh.py            # every team the account plays on
+python scripts/remote_refresh.py --resume   # continue if the token expired mid-run
+```
+
+`scripts/remote_refresh.py` logs into APA Member Services headlessly with
+`APA_USERNAME` / `APA_PASSWORD` from the environment (or uses an existing
+`APA_ACCESS_TOKEN` if one is set), captures the short-lived token the APA
+site attaches to its own API calls, and hands it in memory to the upstream
+game-night launcher, which does the live refresh, verification, per-team
+Coach Cockpit builds, and database promotion. The verified pages land in:
+
+```
+APA-Tracker/exports/remote/<team_id>/dashboard.html   one file per team
+APA-Tracker/exports/remote/manifest.json              team names, build time, source hash
+```
+
+Each `dashboard.html` is one file with no external links, ready to publish
+as-is. The password and token are never written to disk or logged.
