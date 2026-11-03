@@ -66,6 +66,7 @@ LEAGUE_URL = "https://league.poolplayers.com"
 LOGIN_URL = f"{LEAGUE_URL}/login"
 GRAPHQL_HOST = "gql.poolplayers.com"
 CONTINUE_TEXT = "Continue to Member Services"
+LOGIN_BUTTON_NAME = "Log In"
 
 DEFAULT_LOGIN_TIMEOUT_S = 180.0
 FORM_TIMEOUT_MS = 30_000
@@ -136,11 +137,14 @@ def acquire_token(
             logger.info("Opening the APA login page...")
             page.goto(LOGIN_URL)
             # league.poolplayers.com/login redirects to accounts.poolplayers.com,
-            # whose form has #email and #password inputs and one submit button.
+            # whose form has #email and #password inputs and one "Log In"
+            # button. That button carries no type attribute (so
+            # button[type=submit] matches nothing) and stays disabled until
+            # both fields are filled, so fill first, then click it by role.
             page.wait_for_selector("#email", timeout=FORM_TIMEOUT_MS)
             page.fill("#email", username)
             page.fill("#password", password)
-            page.click("button[type=submit]")
+            page.get_by_role("button", name=LOGIN_BUTTON_NAME).click(timeout=FORM_TIMEOUT_MS)
             logger.info("Credentials submitted; waiting for Member Services...")
 
             deadline = time.monotonic() + timeout_s

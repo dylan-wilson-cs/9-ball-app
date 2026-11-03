@@ -108,8 +108,15 @@ class _FakePage:
     def fill(self, selector, value):
         self.filled[selector] = value
 
-    def click(self, selector):
-        self.clicked.append(selector)
+    def get_by_role(self, role, name=None):
+        assert (role, name) == ("button", remote.LOGIN_BUTTON_NAME)
+        page = self
+
+        class _Clickable:
+            def click(self, timeout=None):
+                page.clicked.append(f"role=button name={name}")
+
+        return _Clickable()
 
     def wait_for_timeout(self, ms):
         self.tick_count += 1
@@ -193,7 +200,7 @@ def test_acquire_token_fills_form_submits_and_captures_authorization_header():
     assert page.goto_url == remote.LOGIN_URL
     assert page.waited_for == ["#email"]
     assert page.filled == {"#email": "me@example.com", "#password": "s3cret"}
-    assert page.clicked == ["button[type=submit]"]
+    assert page.clicked == ["role=button name=Log In"]
     assert browser.launch_kwargs == {"headless": True}
     assert "Headless" not in (context.user_agent or "Headless")
     assert browser.closed is True
