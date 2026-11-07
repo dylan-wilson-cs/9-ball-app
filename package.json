@@ -25,6 +25,7 @@
         "vite": "^6.0.0"
     },
     "dependencies": {
-        "bootstrap": "^5.3.3"
+        "@fontsource-variable/atkinson-hyperlegible-next": "^5.3.0",
+        "@fontsource-variable/big-shoulders-display": "^5.3.0"
     }
 }
