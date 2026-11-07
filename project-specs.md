@@ -122,6 +122,7 @@ function resetGame(): void
 - One shared dead-ball total for the match (not per player)
 - Shows the match total and the count in the current rack
 - When the 9-ball is made, the rack's dead balls carry into the match total
+- Balls still on the table when the 9-ball is made also count as dead
 - Un-making a ball (made -> dead) removes the points from the player who made it
 
 ## Styling Requirements

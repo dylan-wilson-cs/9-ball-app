@@ -56,12 +56,18 @@
         const isBall9 = ballIndex === 8;
         const currentState = ballStates[ballIndex];
         const nextState = getNextBallState(currentState, isBall9);
+        // Balls other than the 9 still on the table when the 9 is made
+        const leftovers = ballStates.filter(
+            (state, i) => i !== 8 && state === "available"
+        ).length;
 
         if (
             isBall9 &&
             nextState === "sunk" &&
             !confirm(
-                "Are you sure you want to pocket the 9-ball? This will reset all other balls."
+                leftovers > 0
+                    ? `Pocket the 9-ball? The ${leftovers} ball${leftovers === 1 ? "" : "s"} still on the table will count as dead, and the rack will reset.`
+                    : "Pocket the 9-ball? The rack will reset."
             )
         ) {
             return;
@@ -79,8 +85,9 @@
         }
 
         if (isBall9 && nextState === "sunk") {
-            // Rack over: keep this rack's dead balls in the running total
-            deadCarry += deadInRack;
+            // Rack over: this rack's dead balls, plus any balls left on
+            // the table, go into the running dead-ball total
+            deadCarry += deadInRack + leftovers;
             ballStates = Array(9).fill("available");
             ballScorer = Array(9).fill(null);
         } else {
