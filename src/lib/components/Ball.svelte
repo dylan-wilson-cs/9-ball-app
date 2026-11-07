@@ -30,41 +30,56 @@
 <button
     type="button"
     class="ball"
-    class:made={state === "sunk"}
-    class:dead={state === "dead"}
     onclick={onClick}
     disabled={locked}
     aria-label="{number} ball, {label}{locked ? ', locked' : ''}"
 >
-    <span class="ball-body" class:striped style="--ball-color: {color};">
+    <span
+        class="ball-body"
+        class:striped
+        class:made={state === "sunk"}
+        class:dead={state === "dead"}
+        style="--ball-color: {color};"
+    >
         <span class="ball-number">{number}</span>
     </span>
 
     {#if state === "sunk"}
         <span class="status-badge made-badge" aria-hidden="true">✓</span>
     {:else if state === "dead"}
-        <span class="status-badge dead-badge" aria-hidden="true">✕</span>
+        <span class="status-badge dead-badge" aria-hidden="true">✗</span>
     {/if}
 </button>
 
 <style>
     .ball {
         position: relative;
-        width: var(--ball-size, 96px);
+        width: min(100px, 26vw);
         aspect-ratio: 1;
         padding: 0;
         border: none;
         border-radius: 50%;
         background: none;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+        transition: transform 0.1s ease;
     }
 
     .ball:disabled {
         cursor: not-allowed;
-        opacity: 0.25;
+    }
+
+    .ball:disabled .ball-body {
+        opacity: 0.2;
+    }
+
+    .ball:not(:disabled):active {
+        transform: scale(0.94);
     }
 
     .ball:focus-visible {
-        outline-offset: 5px;
+        outline: 3px solid #0d6efd;
+        outline-offset: 4px;
     }
 
     .ball-body {
@@ -74,101 +89,78 @@
         align-items: center;
         justify-content: center;
         border-radius: 50%;
-        background:
-            radial-gradient(
-                circle at 34% 28%,
-                rgba(255, 255, 255, 0.55) 0 6%,
-                transparent 18%
-            ),
-            radial-gradient(
-                circle at 42% 38%,
-                var(--ball-color) 40%,
-                color-mix(in srgb, var(--ball-color) 50%, black) 100%
-            );
-        box-shadow: 0 8px 12px -4px rgba(0, 0, 0, 0.55);
+        background: radial-gradient(
+            circle at 45% 40%,
+            var(--ball-color) 45%,
+            color-mix(in srgb, var(--ball-color) 55%, black) 100%
+        );
+        box-shadow:
+            0 6px 10px rgba(0, 0, 0, 0.35),
+            inset -6px -8px 14px rgba(0, 0, 0, 0.3);
         transition:
-            transform 0.18s ease,
-            opacity 0.18s ease,
-            filter 0.18s ease;
+            opacity 0.2s ease,
+            filter 0.2s ease;
     }
 
-    /* The stripe ball keeps the ivory caps above and below the color band */
     .ball-body.striped {
-        background:
-            radial-gradient(
-                circle at 34% 28%,
-                rgba(255, 255, 255, 0.6) 0 6%,
-                transparent 18%
-            ),
-            radial-gradient(
-                circle at 42% 38%,
-                transparent 55%,
-                rgba(0, 0, 0, 0.35) 100%
-            ),
-            linear-gradient(
-                to bottom,
-                var(--ivory) 0 22%,
-                var(--ball-color) 22% 78%,
-                var(--ivory) 78% 100%
-            );
+        background: linear-gradient(
+            to bottom,
+            #f8f6ef 0 24%,
+            var(--ball-color) 24% 76%,
+            #f8f6ef 76% 100%
+        );
+        box-shadow:
+            0 6px 10px rgba(0, 0, 0, 0.35),
+            inset -6px -8px 16px rgba(0, 0, 0, 0.35);
     }
 
-    .ball:not(:disabled):active .ball-body {
-        transform: scale(0.93);
-    }
-
-    /* A made ball drops into the cloth: smaller, flatter, faded */
-    .made .ball-body {
-        transform: scale(0.72);
-        opacity: 0.45;
-        box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.5);
-    }
-
-    .dead .ball-body {
-        transform: scale(0.72);
+    .ball-body.made {
         opacity: 0.4;
+    }
+
+    .ball-body.dead {
+        opacity: 0.35;
         filter: grayscale(1);
-        box-shadow: none;
     }
 
     .ball-number {
         display: flex;
         align-items: center;
         justify-content: center;
-        width: 48%;
+        width: 46%;
         aspect-ratio: 1;
         border-radius: 50%;
-        background: var(--ivory);
-        color: #1a1a1a;
-        font-family: var(--font-display);
-        font-weight: 800;
-        font-size: calc(var(--ball-size, 96px) * 0.3);
+        background: #fff;
+        color: #111;
+        font-weight: 700;
+        font-size: clamp(1rem, 4.5vw, 1.5rem);
         line-height: 1;
+        box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.25);
     }
 
     .status-badge {
         position: absolute;
-        right: 4%;
-        bottom: 4%;
+        top: -2%;
+        right: -2%;
         display: flex;
         align-items: center;
         justify-content: center;
         width: 36%;
         aspect-ratio: 1;
-        border: 3px solid var(--cloth-deep);
+        border: 3px solid #fff;
         border-radius: 50%;
+        color: #fff;
         font-weight: 700;
-        font-size: calc(var(--ball-size, 96px) * 0.19);
+        font-size: clamp(0.9rem, 4vw, 1.3rem);
         line-height: 1;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
     }
 
     .made-badge {
-        background: var(--brass);
-        color: var(--rail);
+        background: #198754;
     }
 
     .dead-badge {
-        background: var(--ivory-dim);
-        color: var(--cloth-shadow);
+        background: #dc3545;
     }
 </style>

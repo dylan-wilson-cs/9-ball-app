@@ -1,6 +1,6 @@
 # 9-ball-app
 
-A single-page SvelteKit app (Svelte 5 runes, TypeScript, plain CSS) that keeps score for an APA-style 9-ball match between two players on one phone.
+A single-page SvelteKit app (Svelte 5 runes, TypeScript, Bootstrap 5) that keeps score for an APA-style 9-ball match between two players on one phone.
 
 ## Commands
 
@@ -14,7 +14,6 @@ A single-page SvelteKit app (Svelte 5 runes, TypeScript, plain CSS) that keeps s
 - `src/routes/+page.svelte` holds all match state and scoring logic.
 - `src/lib/components/GameSetup.svelte` is the setup form: two names and a race target per player, 14 to 100.
 - `src/lib/components/Ball.svelte` draws one tappable ball.
-- `src/app.css` holds the color and font tokens and the shared button styles. Fonts are self-hosted through `@fontsource-variable` packages.
 - `src/lib/storage.ts` saves the match to localStorage. Bump `STORAGE_KEY` if the saved shape changes incompatibly.
 
 ## Scoring rules
