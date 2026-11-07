@@ -72,12 +72,6 @@
         border-radius: 50%;
         background:
             radial-gradient(
-                circle at 32% 26%,
-                rgba(255, 255, 255, 0.75) 0,
-                rgba(255, 255, 255, 0.15) 18%,
-                rgba(255, 255, 255, 0) 32%
-            ),
-            radial-gradient(
                 circle at 45% 40%,
                 var(--ball-color) 45%,
                 color-mix(in srgb, var(--ball-color) 55%, black) 100%
@@ -92,12 +86,6 @@
 
     .ball-body.striped {
         background:
-            radial-gradient(
-                circle at 32% 26%,
-                rgba(255, 255, 255, 0.75) 0,
-                rgba(255, 255, 255, 0.15) 18%,
-                rgba(255, 255, 255, 0) 32%
-            ),
             linear-gradient(
                 to bottom,
                 #f8f6ef 0 24%,
