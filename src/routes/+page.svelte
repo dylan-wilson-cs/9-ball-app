@@ -50,26 +50,30 @@
         currentPlayer = 0;
     }
 
-    function handleBallClick(ballIndex: number) {
+    // In-page confirmation for making the 9. Browser confirm() dialogs are
+    // blocked in sandboxed frames (e.g. the published page), where they
+    // return false immediately and the 9 could never be made.
+    let confirmingNine = $state(false);
+    let leftoversOnTable = $derived(
+        ballStates.filter((state, i) => i !== 8 && state === "available")
+            .length
+    );
+
+    function confirmNine() {
+        confirmingNine = false;
+        handleBallClick(8, true);
+    }
+
+    function handleBallClick(ballIndex: number, confirmed = false) {
         if (!isStarted) return;
 
         const isBall9 = ballIndex === 8;
         const currentState = ballStates[ballIndex];
         const nextState = getNextBallState(currentState, isBall9);
-        // Balls other than the 9 still on the table when the 9 is made
-        const leftovers = ballStates.filter(
-            (state, i) => i !== 8 && state === "available"
-        ).length;
+        const leftovers = leftoversOnTable;
 
-        if (
-            isBall9 &&
-            nextState === "sunk" &&
-            !confirm(
-                leftovers > 0
-                    ? `Pocket the 9-ball? The ${leftovers} ball${leftovers === 1 ? "" : "s"} still on the table will count as dead, and the rack will reset.`
-                    : "Pocket the 9-ball? The rack will reset."
-            )
-        ) {
+        if (isBall9 && nextState === "sunk" && !confirmed) {
+            confirmingNine = true;
             return;
         }
 
@@ -178,6 +182,47 @@
             {/each}
         </div>
 
+        {#if confirmingNine}
+            <div class="confirm-backdrop">
+                <div
+                    class="card shadow confirm-card"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="confirm-nine-title"
+                >
+                    <div class="card-body text-center">
+                        <h2 id="confirm-nine-title" class="h4 mb-2">
+                            Pocket the 9-ball?
+                        </h2>
+                        <p class="mb-3">
+                            {#if leftoversOnTable > 0}
+                                The {leftoversOnTable}
+                                {leftoversOnTable === 1 ? "ball" : "balls"} still
+                                on the table will count as dead, and the rack
+                                will reset.
+                            {:else}
+                                The rack will reset.
+                            {/if}
+                        </p>
+                        <div class="d-flex gap-2 justify-content-center">
+                            <button
+                                class="btn btn-outline-secondary btn-lg"
+                                onclick={() => (confirmingNine = false)}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                class="btn btn-success btn-lg"
+                                onclick={confirmNine}
+                            >
+                                Pocket 9
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        {/if}
+
         <div class="d-flex justify-content-center">
             <button class="btn btn-primary btn-lg w-75" onclick={endTurn}>
                 End Turn
@@ -199,6 +244,20 @@
         font-size: 0.6em;
         font-weight: normal;
         color: #6c757d;
+    }
+    .confirm-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 1050;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        background: rgba(0, 0, 0, 0.5);
+    }
+    .confirm-card {
+        width: 100%;
+        max-width: 360px;
     }
     .table-color {
         background-color: #155843;
