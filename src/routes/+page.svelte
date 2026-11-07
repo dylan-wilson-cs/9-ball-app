@@ -2,29 +2,101 @@
     import Ball from "$lib/components/Ball.svelte";
     import GameSetup from "$lib/components/GameSetup.svelte";
     import { getNextBallState } from "$lib/types/game";
+    import type { BallState, Player } from "$lib/types/game";
     import Icon from "../images/9ball.png";
+    import { onMount } from "svelte";
+    import { loadMatch, saveMatch } from "$lib/storage";
 
     // Game state using runes
     let isStarted = $state(false);
     let player1 = $state("");
     let player2 = $state("");
-    let raceTo = $state(0);
-    let currentPlayer = $state(0);
+    let raceTo1 = $state(0);
+    let raceTo2 = $state(0);
+    let currentPlayer = $state<Player>(0);
     let score1 = $state(0);
     let score2 = $state(0);
-    let ballStates = $state(Array(9).fill("available"));
+    let ballStates = $state<BallState[]>(Array(9).fill("available"));
+    // Which player made each ball, so un-making it takes the points back
+    // from the right player even after the turn has changed.
+    let ballScorer = $state<(Player | null)[]>(Array(9).fill(null));
+    // Dead balls from completed racks (shared total, not per player)
+    let deadCarry = $state(0);
+    let deadInRack = $derived(
+        ballStates.filter((state) => state === "dead").length
+    );
+    let deadTotal = $derived(deadCarry + deadInRack);
 
     // Derived values
     let winner = $derived.by(() => {
-        if (score1 >= raceTo) return 0;
-        if (score2 >= raceTo) return 1;
+        if (score1 >= raceTo1) return 0;
+        if (score2 >= raceTo2) return 1;
         return -1;
     });
 
-    function startGame(p1: string, p2: string, rt: number) {
+    // Persist the match so a reload or browser restart resumes it.
+    // Saving starts only after the saved match has been loaded, so the
+    // initial empty state never overwrites it.
+    let restored = $state(false);
+
+    onMount(() => {
+        const saved = loadMatch();
+        if (saved) {
+            isStarted = saved.isStarted;
+            player1 = saved.player1;
+            player2 = saved.player2;
+            raceTo1 = saved.raceTo1;
+            raceTo2 = saved.raceTo2;
+            currentPlayer = saved.currentPlayer;
+            score1 = saved.score1;
+            score2 = saved.score2;
+            ballStates = saved.ballStates;
+            ballScorer = saved.ballScorer;
+            deadCarry = saved.deadCarry;
+        }
+        restored = true;
+    });
+
+    $effect(() => {
+        if (!restored) return;
+        saveMatch({
+            isStarted,
+            player1,
+            player2,
+            raceTo1,
+            raceTo2,
+            currentPlayer,
+            score1,
+            score2,
+            ballStates: [...ballStates],
+            ballScorer: [...ballScorer],
+            deadCarry,
+        });
+    });
+
+    // "End Match" needs a second tap within a few seconds, so a stray tap
+    // can't wipe a saved match.
+    let confirmingEnd = $state(false);
+    let confirmEndTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function endMatch() {
+        if (!confirmingEnd) {
+            confirmingEnd = true;
+            clearTimeout(confirmEndTimer);
+            confirmEndTimer = setTimeout(() => (confirmingEnd = false), 3000);
+            return;
+        }
+        clearTimeout(confirmEndTimer);
+        confirmingEnd = false;
+        resetScores();
+        isStarted = false;
+    }
+
+    function startGame(p1: string, p2: string, rt1: number, rt2: number) {
         player1 = p1;
         player2 = p2;
-        raceTo = rt;
+        raceTo1 = rt1;
+        raceTo2 = rt2;
         isStarted = true;
         resetScores();
     }
@@ -33,51 +105,74 @@
         score1 = 0;
         score2 = 0;
         ballStates = Array(9).fill("available");
+        ballScorer = Array(9).fill(null);
+        deadCarry = 0;
         currentPlayer = 0;
     }
 
-    function handleBallClick(ballIndex: number) {
+    // In-page confirmation for making the 9. Browser confirm() dialogs are
+    // blocked in sandboxed frames (e.g. the published page), where they
+    // return false immediately and the 9 could never be made.
+    let confirmingNine = $state(false);
+    let leftoversOnTable = $derived(
+        ballStates.filter((state, i) => i !== 8 && state === "available")
+            .length
+    );
+
+    function confirmNine() {
+        confirmingNine = false;
+        handleBallClick(8, true);
+    }
+
+    function handleBallClick(ballIndex: number, confirmed = false) {
         if (!isStarted) return;
 
         const isBall9 = ballIndex === 8;
         const currentState = ballStates[ballIndex];
         const nextState = getNextBallState(currentState, isBall9);
+        const leftovers = leftoversOnTable;
 
-        if (
-            isBall9 &&
-            nextState === "sunk" &&
-            !confirm(
-                "Are you sure you want to pocket the 9-ball? This will reset all other balls."
-            )
-        ) {
+        if (isBall9 && nextState === "sunk" && !confirmed) {
+            confirmingNine = true;
             return;
         }
 
-        // Update score
+        const points = isBall9 ? 2 : 1;
+
+        // Un-making a ball takes the points back from whoever made it
         if (currentState === "sunk" && nextState !== "sunk") {
-            // Decrement score when unsinking a ball
-            if (currentPlayer === 0) {
-                score1 -= isBall9 ? 2 : 1;
-            } else {
-                score2 -= isBall9 ? 2 : 1;
-            }
+            addPoints(ballScorer[ballIndex] ?? currentPlayer, -points);
         }
-        // Add point if pocketing a ball
+        // Making a ball scores for the current player
         else if (currentState !== "sunk" && nextState === "sunk") {
-            if (currentPlayer === 0) {
-                score1 += isBall9 ? 2 : 1;
-            } else {
-                score2 += isBall9 ? 2 : 1;
-            }
+            addPoints(currentPlayer, points);
         }
 
-        // Update ball states
         if (isBall9 && nextState === "sunk") {
+            // Rack over: this rack's dead balls, plus any balls left on
+            // the table, go into the running dead-ball total
+            deadCarry += deadInRack + leftovers;
             ballStates = Array(9).fill("available");
+            ballScorer = Array(9).fill(null);
         } else {
             ballStates = ballStates.map((state, i) =>
                 i === ballIndex ? nextState : state
             );
+            ballScorer = ballScorer.map((scorer, i) =>
+                i === ballIndex
+                    ? nextState === "sunk"
+                        ? currentPlayer
+                        : null
+                    : scorer
+            );
+        }
+    }
+
+    function addPoints(player: Player, points: number) {
+        if (player === 0) {
+            score1 += points;
+        } else {
+            score2 += points;
         }
     }
 
@@ -96,7 +191,9 @@
 </header>
 
 <div class="container-fluid">
-    {#if !isStarted}
+    {#if !restored}
+        <!-- Wait for the saved match to load to avoid flashing the setup form -->
+    {:else if !isStarted}
         <GameSetup onStartGame={startGame} />
     {:else}
         <!-- Score Header -->
@@ -106,7 +203,7 @@
                     class="fs-2 text-center m-0"
                     class:active={currentPlayer === 0}
                 >
-                    {player1}: {score1}
+                    {player1}: {score1}<span class="race-target">/{raceTo1}</span>
                 </h2>
             </div>
             <div class="col-6">
@@ -114,9 +211,14 @@
                     class="fs-2 text-center m-0"
                     class:active={currentPlayer === 1}
                 >
-                    {player2}: {score2}
+                    {player2}: {score2}<span class="race-target">/{raceTo2}</span>
                 </h2>
             </div>
+        </div>
+
+        <div class="text-center text-secondary fs-5 mb-3">
+            Dead balls: <span class="fw-bold text-body">{deadTotal}</span>
+            <span class="small">({deadInRack} this rack)</span>
         </div>
 
         {#if winner !== -1}
@@ -142,9 +244,61 @@
             {/each}
         </div>
 
+        {#if confirmingNine}
+            <div class="confirm-backdrop">
+                <div
+                    class="card shadow confirm-card"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="confirm-nine-title"
+                >
+                    <div class="card-body text-center">
+                        <h2 id="confirm-nine-title" class="h4 mb-2">
+                            Pocket the 9-ball?
+                        </h2>
+                        <p class="mb-3">
+                            {#if leftoversOnTable > 0}
+                                The {leftoversOnTable}
+                                {leftoversOnTable === 1 ? "ball" : "balls"} still
+                                on the table will count as dead, and the rack
+                                will reset.
+                            {:else}
+                                The rack will reset.
+                            {/if}
+                        </p>
+                        <div class="d-flex gap-2 justify-content-center">
+                            <button
+                                class="btn btn-outline-secondary btn-lg"
+                                onclick={() => (confirmingNine = false)}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                class="btn btn-success btn-lg"
+                                onclick={confirmNine}
+                            >
+                                Pocket 9
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        {/if}
+
         <div class="d-flex justify-content-center">
             <button class="btn btn-primary btn-lg w-75" onclick={endTurn}>
                 End Turn
+            </button>
+        </div>
+
+        <div class="d-flex justify-content-center mt-3 mb-4">
+            <button
+                class="btn btn-lg w-75"
+                class:btn-outline-secondary={!confirmingEnd}
+                class:btn-danger={confirmingEnd}
+                onclick={endMatch}
+            >
+                {confirmingEnd ? "Tap again to end match" : "End Match"}
             </button>
         </div>
     {/if}
@@ -158,6 +312,25 @@
     .active {
         color: #007bff;
         font-weight: bold;
+    }
+    .race-target {
+        font-size: 0.6em;
+        font-weight: normal;
+        color: #6c757d;
+    }
+    .confirm-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 1050;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        background: rgba(0, 0, 0, 0.5);
+    }
+    .confirm-card {
+        width: 100%;
+        max-width: 360px;
     }
     .table-color {
         background-color: #155843;

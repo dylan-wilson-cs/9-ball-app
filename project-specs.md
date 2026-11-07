@@ -3,7 +3,7 @@
 ## Core Features
 - Track 9-ball pool game between 2 players
 - Track score based on ball pocketing
-- Race to X points format
+- Race to X points format, with a separate race target per player (handicap)
 - Responsive design for mobile/desktop
 
 ## Ball Display Requirements
@@ -15,7 +15,7 @@
   - 4: Purple
   - 5: Orange
   - 6: Green
-  - 7: Red
+  - 7: Maroon
   - 8: Black
   - 9: Yellow
 - Each ball shows its number centered in white text
@@ -61,7 +61,7 @@
 interface GameState {
   isStarted: boolean;
   players: [string, string];
-  raceTo: number;
+  raceTo: [number, number];
   currentPlayer: 0 | 1;
   scores: [number, number];
   ballStates: Array<'available' | 'pocketed' | 'fouled'>;
@@ -72,7 +72,7 @@ interface GameState {
 
 ### Game Setup
 ```typescript
-function startGame(p1: string, p2: string, raceTo: number): void
+function startGame(p1: string, p2: string, raceTo1: number, raceTo2: number): void
 function validateSetup(p1: string, p2: string, raceTo: number): boolean
 ```
 
@@ -113,10 +113,17 @@ function resetGame(): void
 ```
 
 ## Ball State Visual Indicators
-- Available: Full opacity
-- Pocketed: Check mark above
-- Fouled: X mark above
-- Optional: Reduced opacity for pocketed/fouled balls
+- Clicking a ball cycles: available -> made -> dead -> available (9-ball: available <-> made)
+- Available: Full color, shaded like a pool ball; 9-ball drawn with a yellow stripe
+- Made: Dimmed, green check badge on the ball's top-right edge
+- Dead: Greyed out, red X badge on the ball's top-right edge
+
+## Dead Ball Tracking
+- One shared dead-ball total for the match (not per player)
+- Shows the match total and the count in the current rack
+- When the 9-ball is made, the rack's dead balls carry into the match total
+- Balls still on the table when the 9-ball is made also count as dead
+- Un-making a ball (made -> dead) removes the points from the player who made it
 
 ## Styling Requirements
 - Bootstrap 5 responsive grid
@@ -134,12 +141,18 @@ function resetGame(): void
 6. Polish and responsive design
 
 ## User Interface Flow
-1. Enter player names and race to points
+1. Enter player names and each player's race-to points
 2. Click balls to mark as pocketed
 3. End turn button switches players
 4. Auto-switch on 9-ball pocket
-5. First to target score wins
+5. First player to reach their own target score wins
 6. Option to reset/start new game
+
+## Match Persistence
+- The match is saved to the browser's localStorage after every change
+- Reloading the page, closing the tab, or restarting the browser resumes the match
+- "End Match" (tap twice to confirm) returns to setup and clears the saved match
+- If storage is unavailable or the save is invalid, the app starts at setup
 
 ## Error Handling
 - Invalid player names
