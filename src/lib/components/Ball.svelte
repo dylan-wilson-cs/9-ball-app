@@ -1,6 +1,18 @@
 <script lang="ts">
-    import type { BallState } from "$lib/types/game";
-    import { BALL_COLORS } from "$lib/types/game";
+    import type { BallState } from "$lib/match";
+
+    // Yellow, blue, red, purple, orange, green, maroon, black, yellow stripe
+    const COLORS = [
+        "#F5C211",
+        "#1E4FB5",
+        "#D7262C",
+        "#5B2A86",
+        "#F07A1A",
+        "#13804A",
+        "#7A1E22",
+        "#151515",
+        "#F5C211",
+    ];
 
     interface Props {
         number: number;
@@ -14,16 +26,13 @@
 
     let { number, state, madeBy, locked = false, onClick }: Props = $props();
 
-    let color = $derived(BALL_COLORS[number]);
-    let striped = $derived(number > 8);
+    const LABELS: Record<BallState, string> = {
+        available: "on table",
+        sunk: "made",
+        dead: "dead",
+    };
     let label = $derived(
-        state === "sunk"
-            ? madeBy
-                ? `made by ${madeBy}`
-                : "made"
-            : state === "dead"
-              ? "dead"
-              : "on table",
+        state === "sunk" && madeBy ? `made by ${madeBy}` : LABELS[state],
     );
 </script>
 
@@ -36,10 +45,10 @@
 >
     <span
         class="ball-body"
-        class:striped
+        class:striped={number > 8}
         class:made={state === "sunk"}
         class:dead={state === "dead"}
-        style="--ball-color: {color};"
+        style:--ball-color={COLORS[number - 1]}
     >
         <span class="ball-number">{number}</span>
     </span>

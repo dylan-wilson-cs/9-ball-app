@@ -1,93 +1,61 @@
 <script lang="ts">
-    // The fields are bound to the page's match state, so the last names and
+    import type { Player } from "$lib/match";
+
+    // The fields are bound to the match's players, so the last names and
     // race targets are still filled in after a match ends
     interface Props {
-        player1: string;
-        player2: string;
-        raceTo1: number;
-        raceTo2: number;
-        onStartGame: () => void;
+        players: [Player, Player];
+        onStart: () => void;
     }
 
-    let {
-        player1 = $bindable(),
-        player2 = $bindable(),
-        raceTo1 = $bindable(),
-        raceTo2 = $bindable(),
-        onStartGame,
-    }: Props = $props();
+    let { players = $bindable(), onStart }: Props = $props();
 
-    let onsubmit = (e: Event) => {
-        e.preventDefault();
-        onStartGame();
-    };
-
-    const MIN_RACE = 14;
-    const MAX_RACE = 100;
-    // At least one non-space character, so a name can't be blank
-    const NAME_PATTERN = ".*\\S.*";
+    function onsubmit(event: SubmitEvent) {
+        event.preventDefault();
+        onStart();
+    }
 </script>
 
-{#snippet playerFields(
-    n: 1 | 2,
-    name: string,
-    setName: (value: string) => void,
-    race: number,
-    setRace: (value: number) => void,
-)}
-    <fieldset class="card">
-        <div class="card-body">
-            <legend class="h5 fw-bold mb-2">Player {n}</legend>
-            <div class="row g-2">
-                <div class="col-8">
-                    <label for="player{n}" class="form-label small mb-1"
-                        >Name</label
-                    >
-                    <input
-                        type="text"
-                        class="form-control form-control-lg"
-                        id="player{n}"
-                        bind:value={() => name, setName}
-                        pattern={NAME_PATTERN}
-                        title="Enter a name"
-                        autocomplete="off"
-                        required
-                    />
-                </div>
-                <div class="col-4">
-                    <label for="raceTo{n}" class="form-label small mb-1"
-                        >Races to</label
-                    >
-                    <input
-                        type="number"
-                        inputmode="numeric"
-                        class="form-control form-control-lg"
-                        id="raceTo{n}"
-                        bind:value={() => race, setRace}
-                        min={MIN_RACE}
-                        max={MAX_RACE}
-                        required
-                    />
+<form class="d-flex flex-column gap-3" {onsubmit}>
+    {#each players as player, i}
+        <fieldset class="card">
+            <div class="card-body">
+                <legend class="h5 fw-bold mb-2">Player {i + 1}</legend>
+                <div class="row g-2">
+                    <div class="col-8">
+                        <label for="name{i}" class="form-label small mb-1"
+                            >Name</label
+                        >
+                        <!-- At least one non-space character -->
+                        <input
+                            type="text"
+                            class="form-control form-control-lg"
+                            id="name{i}"
+                            bind:value={player.name}
+                            pattern=".*\S.*"
+                            title="Enter a name"
+                            autocomplete="off"
+                            required
+                        />
+                    </div>
+                    <div class="col-4">
+                        <label for="raceTo{i}" class="form-label small mb-1"
+                            >Races to</label
+                        >
+                        <input
+                            type="number"
+                            inputmode="numeric"
+                            class="form-control form-control-lg"
+                            id="raceTo{i}"
+                            bind:value={player.raceTo}
+                            min="14"
+                            max="100"
+                            required
+                        />
+                    </div>
                 </div>
             </div>
-        </div>
-    </fieldset>
-{/snippet}
-
-<form class="d-flex flex-column gap-3" {onsubmit}>
-    {@render playerFields(
-        1,
-        player1,
-        (v) => (player1 = v),
-        raceTo1,
-        (v) => (raceTo1 = v),
-    )}
-    {@render playerFields(
-        2,
-        player2,
-        (v) => (player2 = v),
-        raceTo2,
-        (v) => (raceTo2 = v),
-    )}
+        </fieldset>
+    {/each}
     <button type="submit" class="btn btn-felt btn-lg w-100">Start Game</button>
 </form>

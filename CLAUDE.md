@@ -11,11 +11,13 @@ A single-page SvelteKit app (Svelte 5 runes, TypeScript, Bootstrap 5) that keeps
 
 ## Files
 
-- `src/routes/+page.svelte` holds all match state and scoring logic.
+- `src/routes/+page.svelte` holds the match state and scoring logic.
+- `src/lib/match.ts` defines the match types, a new match and rack, and saving to localStorage. Bump `STORAGE_KEY` if the saved shape changes incompatibly.
 - `src/lib/components/GameSetup.svelte` is the setup form: two names and a race target per player, 14 to 100.
 - `src/lib/components/Ball.svelte` draws one tappable ball.
-- `src/app.html` loads Bootstrap from a CDN and sets `data-bs-theme` from the system light or dark setting. It also defines the `--felt` color and the `.btn-felt` button.
-- `src/lib/storage.ts` saves the match to localStorage. Bump `STORAGE_KEY` if the saved shape changes incompatibly.
+- `src/routes/+layout.svelte` loads Bootstrap from npm and `src/app.css`, which sets the font, the `--felt` color, and the `.btn-felt` button.
+- `src/routes/+layout.ts` turns off SSR, so the page renders only in the browser and can read localStorage while it sets up.
+- `src/app.html` sets `data-bs-theme` from the system light or dark setting.
 
 ## Scoring rules
 
