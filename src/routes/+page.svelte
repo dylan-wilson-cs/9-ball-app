@@ -2,6 +2,7 @@
     import Ball from "$lib/components/Ball.svelte";
     import GameSetup from "$lib/components/GameSetup.svelte";
     import { getNextBallState } from "$lib/types/game";
+    import type { BallState, Player } from "$lib/types/game";
     import Icon from "../images/9ball.png";
 
     // Game state using runes
@@ -10,10 +11,19 @@
     let player2 = $state("");
     let raceTo1 = $state(0);
     let raceTo2 = $state(0);
-    let currentPlayer = $state(0);
+    let currentPlayer = $state<Player>(0);
     let score1 = $state(0);
     let score2 = $state(0);
-    let ballStates = $state(Array(9).fill("available"));
+    let ballStates = $state<BallState[]>(Array(9).fill("available"));
+    // Which player made each ball, so un-making it takes the points back
+    // from the right player even after the turn has changed.
+    let ballScorer = $state<(Player | null)[]>(Array(9).fill(null));
+    // Dead balls from completed racks (shared total, not per player)
+    let deadCarry = $state(0);
+    let deadInRack = $derived(
+        ballStates.filter((state) => state === "dead").length
+    );
+    let deadTotal = $derived(deadCarry + deadInRack);
 
     // Derived values
     let winner = $derived.by(() => {
@@ -35,6 +45,8 @@
         score1 = 0;
         score2 = 0;
         ballStates = Array(9).fill("available");
+        ballScorer = Array(9).fill(null);
+        deadCarry = 0;
         currentPlayer = 0;
     }
 
@@ -55,31 +67,41 @@
             return;
         }
 
-        // Update score
+        const points = isBall9 ? 2 : 1;
+
+        // Un-making a ball takes the points back from whoever made it
         if (currentState === "sunk" && nextState !== "sunk") {
-            // Decrement score when unsinking a ball
-            if (currentPlayer === 0) {
-                score1 -= isBall9 ? 2 : 1;
-            } else {
-                score2 -= isBall9 ? 2 : 1;
-            }
+            addPoints(ballScorer[ballIndex] ?? currentPlayer, -points);
         }
-        // Add point if pocketing a ball
+        // Making a ball scores for the current player
         else if (currentState !== "sunk" && nextState === "sunk") {
-            if (currentPlayer === 0) {
-                score1 += isBall9 ? 2 : 1;
-            } else {
-                score2 += isBall9 ? 2 : 1;
-            }
+            addPoints(currentPlayer, points);
         }
 
-        // Update ball states
         if (isBall9 && nextState === "sunk") {
+            // Rack over: keep this rack's dead balls in the running total
+            deadCarry += deadInRack;
             ballStates = Array(9).fill("available");
+            ballScorer = Array(9).fill(null);
         } else {
             ballStates = ballStates.map((state, i) =>
                 i === ballIndex ? nextState : state
             );
+            ballScorer = ballScorer.map((scorer, i) =>
+                i === ballIndex
+                    ? nextState === "sunk"
+                        ? currentPlayer
+                        : null
+                    : scorer
+            );
+        }
+    }
+
+    function addPoints(player: Player, points: number) {
+        if (player === 0) {
+            score1 += points;
+        } else {
+            score2 += points;
         }
     }
 
@@ -119,6 +141,11 @@
                     {player2}: {score2}<span class="race-target">/{raceTo2}</span>
                 </h2>
             </div>
+        </div>
+
+        <div class="text-center text-secondary fs-5 mb-3">
+            Dead balls: <span class="fw-bold text-body">{deadTotal}</span>
+            <span class="small">({deadInRack} this rack)</span>
         </div>
 
         {#if winner !== -1}

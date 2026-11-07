@@ -15,15 +15,15 @@ export interface BallColors {
 }
 
 export const BALL_COLORS: BallColors = {
-    1: "#FFFF00", // Yellow
-    2: "#0000FF", // Blue
-    3: "#FF0000", // Red
-    4: "#800080", // Purple
-    5: "#FFA500", // Orange
-    6: "#008000", // Green
-    7: "#FF0000", // Red
-    8: "#000000", // Black
-    9: "#FFFF00", // Yellow
+    1: "#F5C211", // Yellow
+    2: "#1E4FB5", // Blue
+    3: "#D7262C", // Red
+    4: "#5B2A86", // Purple
+    5: "#F07A1A", // Orange
+    6: "#13804A", // Green
+    7: "#7A1E22", // Maroon
+    8: "#151515", // Black
+    9: "#F5C211", // Yellow stripe
 };
 
 export const NINE_BALL_INDEX = 8;

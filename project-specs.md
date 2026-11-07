@@ -15,7 +15,7 @@
   - 4: Purple
   - 5: Orange
   - 6: Green
-  - 7: Red
+  - 7: Maroon
   - 8: Black
   - 9: Yellow
 - Each ball shows its number centered in white text
@@ -113,10 +113,16 @@ function resetGame(): void
 ```
 
 ## Ball State Visual Indicators
-- Available: Full opacity
-- Pocketed: Check mark above
-- Fouled: X mark above
-- Optional: Reduced opacity for pocketed/fouled balls
+- Clicking a ball cycles: available -> made -> dead -> available (9-ball: available <-> made)
+- Available: Full color, shaded like a pool ball; 9-ball drawn with a yellow stripe
+- Made: Dimmed, green check badge on the ball's top-right edge
+- Dead: Greyed out, red X badge on the ball's top-right edge
+
+## Dead Ball Tracking
+- One shared dead-ball total for the match (not per player)
+- Shows the match total and the count in the current rack
+- When the 9-ball is made, the rack's dead balls carry into the match total
+- Un-making a ball (made -> dead) removes the points from the player who made it
 
 ## Styling Requirements
 - Bootstrap 5 responsive grid
