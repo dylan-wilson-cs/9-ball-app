@@ -1,7 +1,7 @@
 <script lang="ts">
     import Ball from "$lib/components/Ball.svelte";
     import GameSetup from "$lib/components/GameSetup.svelte";
-    import { BALL_COLORS, getNextBallState } from "$lib/types/game";
+    import { getNextBallState } from "$lib/types/game";
     import type { BallState, Player } from "$lib/types/game";
     import Icon from "../images/9ball.png";
     import { onMount } from "svelte";
@@ -22,12 +22,6 @@
     // Which player made or killed each ball. Un-making a ball takes the
     // points back from this player even after the turn has changed.
     let ballScorer = $state<(Player | null)[]>(Array(9).fill(null));
-    // Ball numbers each player made in the current rack
-    function madeInRack(player: Player): number[] {
-        return ballScorer.flatMap((scorer, i) =>
-            scorer === player && ballStates[i] === "sunk" ? [i + 1] : [],
-        );
-    }
 
     // A ball the opponent made or killed this rack cannot be changed on
     // your turn
@@ -285,38 +279,53 @@
     }
 </script>
 
-{#snippet madeBalls(numbers: number[])}
-    <div
-        class="made-balls d-flex justify-content-center flex-wrap gap-1 mt-1"
-        aria-label="Made this rack: {numbers.length
-            ? numbers.join(', ')
-            : 'none'}"
-    >
-        {#each numbers as number}
-            <span
-                class="made-chip"
-                class:striped={number > 8}
-                style="--ball-color: {BALL_COLORS[number]};"
-            >
-                <span>{number}</span>
-            </span>
-        {/each}
+{#snippet playerCard(
+    player: Player,
+    name: string,
+    score: number,
+    raceTo: number,
+)}
+    {@const active =
+        winner === -1 ? currentPlayer === player : winner === player}
+    <div class="col-6">
+        <div class="player-card card h-100 text-center" class:active>
+            <div class="card-body px-2 py-1">
+                <h2
+                    class="player-name h6 fw-bold text-truncate m-0"
+                    title={name}
+                >
+                    {name}
+                </h2>
+                <div class="player-score">
+                    <span class="fw-bold">{score}</span><span
+                        class="race-target">/{raceTo}</span
+                    >
+                </div>
+                <div class="needs small">
+                    {winner === player
+                        ? "Winner"
+                        : `needs ${Math.max(0, raceTo - score)}`}
+                    {#if active && winner === -1}
+                        <span class="visually-hidden">, at the table</span>
+                    {/if}
+                </div>
+            </div>
+        </div>
     </div>
 {/snippet}
 
-<header class="table-color text-white py-2 mb-3">
-    <div class="container-fluid">
-        <div class="d-flex align-items-center justify-content-center">
-            <img src={Icon} alt="" class="header-icon me-2" />
-            <h1 class="mb-0 h2">9-Ball Scorekeeper</h1>
+{#if !restored}
+    <!-- Wait for the saved match to load to avoid flashing the setup form -->
+{:else if !isStarted}
+    <header class="table-color text-white py-2 mb-3">
+        <div class="container-fluid">
+            <div class="d-flex align-items-center justify-content-center">
+                <img src={Icon} alt="" class="header-icon me-2" />
+                <h1 class="mb-0 h2">9-Ball Scorekeeper</h1>
+            </div>
         </div>
-    </div>
-</header>
-
-<div class="container-fluid">
-    {#if !restored}
-        <!-- Wait for the saved match to load to avoid flashing the setup form -->
-    {:else if !isStarted}
+    </header>
+    <div class="container-fluid pb-4">
         <GameSetup
             bind:player1
             bind:player2
@@ -324,55 +333,26 @@
             bind:raceTo2
             onStartGame={startGame}
         />
-    {:else}
-        <!-- Score Header -->
-        <div class="row g-3 mb-3">
-            <div class="col-6">
-                <h2
-                    class="score fs-2 m-0"
-                    class:active={currentPlayer === 0}
-                    title={player1}
-                >
-                    <span class="text-truncate">{player1}</span
-                    >:&nbsp;{score1}<span class="race-target">/{raceTo1}</span>
-                </h2>
-                {@render madeBalls(madeInRack(0))}
-            </div>
-            <div class="col-6">
-                <h2
-                    class="score fs-2 m-0"
-                    class:active={currentPlayer === 1}
-                    title={player2}
-                >
-                    <span class="text-truncate">{player2}</span
-                    >:&nbsp;{score2}<span class="race-target">/{raceTo2}</span>
-                </h2>
-                {@render madeBalls(madeInRack(1))}
-            </div>
+    </div>
+{:else}
+    <div class="match container-fluid d-flex flex-column">
+        <div class="d-flex justify-content-end py-2">
+            <button
+                class="btn btn-sm"
+                class:btn-outline-secondary={!confirmingEnd}
+                class:btn-danger={confirmingEnd}
+                onclick={endMatch}
+            >
+                {confirmingEnd ? "Tap again to end match" : "End match"}
+            </button>
         </div>
 
-        <div class="text-center text-secondary fs-5 mb-3">
-            Dead balls: <span class="fw-bold text-body">{deadTotal}</span>
-            <span class="small">({deadInRack} this rack)</span>
+        <div class="row g-2 mb-3">
+            {@render playerCard(0, player1, score1, raceTo1)}
+            {@render playerCard(1, player2, score2, raceTo2)}
         </div>
 
-        <div class="text-center text-secondary fs-5 mb-3">
-            Innings: <span class="fw-bold text-body">{inningTotal}</span>
-            <span class="small">(inning {rackInning} this rack)</span>
-        </div>
-
-        {#if winner !== -1}
-            <div class="alert alert-success py-2 text-center mb-3">
-                <span class="fs-3 fw-bold">
-                    {winner === 0 ? player1 : player2} wins!
-                </span>
-                <button class="btn btn-primary ms-2" onclick={resetScores}>
-                    New Game
-                </button>
-            </div>
-        {/if}
-
-        <div class="row row-cols-3 g-3 mb-4">
+        <div class="ball-grid row row-cols-3 g-3 mb-3 flex-grow-1">
             {#each ballStates as state, i}
                 <div class="col d-flex justify-content-center">
                     <Ball
@@ -390,130 +370,144 @@
             {/each}
         </div>
 
-        {#if undoNine}
-            <div class="d-flex justify-content-center mb-3">
+        <div class="action-bar mt-auto d-flex flex-column gap-2">
+            <div class="stats d-flex justify-content-center gap-3 small">
+                <span>
+                    <span class="stat-label">Dead</span>
+                    <span class="fw-bold">{deadTotal}</span>
+                    <span class="text-body-secondary"
+                        >({deadInRack} this rack)</span
+                    >
+                </span>
+                <span class="vr"></span>
+                <span>
+                    <span class="stat-label">Innings</span>
+                    <span class="fw-bold">{inningTotal}</span>
+                    <span class="text-body-secondary"
+                        >({rackInning} this rack)</span
+                    >
+                </span>
+            </div>
+            {#if winner !== -1}
+                <div class="fs-4 fw-bold text-center text-truncate">
+                    {winner === 0 ? player1 : player2} wins!
+                </div>
+            {/if}
+            <div class="d-flex gap-2">
+                {#if undoNine}
+                    <button
+                        class="btn btn-outline-warning btn-lg text-nowrap"
+                        onclick={undoLastNine}
+                    >
+                        Undo 9-ball
+                    </button>
+                {/if}
+                {#if winner !== -1}
+                    <button
+                        class="btn btn-felt btn-lg flex-grow-1 text-nowrap"
+                        onclick={resetScores}
+                    >
+                        New Game
+                    </button>
+                {:else}
+                    <button
+                        class="btn btn-felt btn-lg flex-grow-1"
+                        onclick={endTurn}
+                    >
+                        End Turn
+                    </button>
+                {/if}
+            </div>
+        </div>
+    </div>
+
+    <dialog
+        bind:this={nineDialog}
+        class="confirm-card rounded shadow border-0 p-0"
+        aria-labelledby="confirm-nine-title"
+        onclose={() => (confirmingNine = false)}
+    >
+        <div class="p-3 text-center">
+            <h2 id="confirm-nine-title" class="h4 mb-2">Pocket the 9-ball?</h2>
+            <p class="mb-3">
+                {#if leftoversOnTable > 0}
+                    The {leftoversOnTable}
+                    {leftoversOnTable === 1 ? "ball" : "balls"} still on the table
+                    will count as dead, and the rack will reset.
+                {:else}
+                    The rack will reset.
+                {/if}
+            </p>
+            <div class="d-flex gap-2 justify-content-center">
                 <button
-                    class="btn btn-outline-warning btn-lg w-75"
-                    onclick={undoLastNine}
+                    class="btn btn-outline-secondary btn-lg"
+                    onclick={() => (confirmingNine = false)}
                 >
-                    Undo 9-ball
+                    Cancel
+                </button>
+                <button class="btn btn-success btn-lg" onclick={confirmNine}>
+                    Pocket 9
                 </button>
             </div>
-        {/if}
-
-        <dialog
-            bind:this={nineDialog}
-            class="confirm-card rounded shadow border-0 p-0"
-            aria-labelledby="confirm-nine-title"
-            onclose={() => (confirmingNine = false)}
-        >
-            <div class="card-body text-center">
-                <h2 id="confirm-nine-title" class="h4 mb-2">
-                    Pocket the 9-ball?
-                </h2>
-                <p class="mb-3">
-                    {#if leftoversOnTable > 0}
-                        The {leftoversOnTable}
-                        {leftoversOnTable === 1 ? "ball" : "balls"} still on the table
-                        will count as dead, and the rack will reset.
-                    {:else}
-                        The rack will reset.
-                    {/if}
-                </p>
-                <div class="d-flex gap-2 justify-content-center">
-                    <button
-                        class="btn btn-outline-secondary btn-lg"
-                        onclick={() => (confirmingNine = false)}
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        class="btn btn-success btn-lg"
-                        onclick={confirmNine}
-                    >
-                        Pocket 9
-                    </button>
-                </div>
-            </div>
-        </dialog>
-
-        <div class="d-flex justify-content-center">
-            <button
-                class="btn btn-primary btn-lg w-75"
-                onclick={endTurn}
-                disabled={winner !== -1}
-            >
-                End Turn
-            </button>
         </div>
-
-        <div class="d-flex justify-content-center mt-3 mb-4">
-            <button
-                class="btn btn-lg w-75"
-                class:btn-outline-secondary={!confirmingEnd}
-                class:btn-danger={confirmingEnd}
-                onclick={endMatch}
-            >
-                {confirmingEnd ? "Tap again to end match" : "End Match"}
-            </button>
-        </div>
-    {/if}
-</div>
+    </dialog>
+{/if}
 
 <style>
     .header-icon {
         width: 40px;
         height: 40px;
     }
-    .active {
-        color: #007bff;
-        font-weight: bold;
+    .table-color {
+        background-color: var(--felt);
+    }
+    .match {
+        min-height: 100dvh;
+    }
+    /* The grid takes the height the cards and bottom bar leave over and
+       spreads the three rows evenly across it */
+    .ball-grid {
+        align-content: space-evenly;
+    }
+    .player-card {
+        transition:
+            background-color 0.2s ease,
+            color 0.2s ease;
+    }
+    .player-card.active {
+        background-color: var(--felt);
+        border-color: var(--felt);
+        color: #fff;
+    }
+    .player-score {
+        font-size: 2rem;
+        line-height: 1.1;
     }
     .race-target {
-        font-size: 0.6em;
-        font-weight: normal;
-        color: #6c757d;
+        font-size: 0.45em;
+        color: var(--bs-secondary-color);
     }
-    .made-balls {
-        min-height: 28px;
+    .needs {
+        color: var(--bs-secondary-color);
     }
-    .made-chip {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 28px;
-        height: 28px;
-        border-radius: 50%;
-        background: var(--ball-color);
+    .player-card.active .race-target,
+    .player-card.active .needs {
+        color: rgba(255, 255, 255, 0.75);
     }
-    .made-chip.striped {
-        background: linear-gradient(
-            to bottom,
-            #f8f6ef 0 24%,
-            var(--ball-color) 24% 76%,
-            #f8f6ef 76% 100%
-        );
-    }
-    .made-chip span {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 16px;
-        height: 16px;
-        border-radius: 50%;
-        background: #fff;
-        color: #111;
+    .stat-label {
         font-size: 0.7rem;
-        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--bs-secondary-color);
     }
-    .score {
-        display: flex;
-        justify-content: center;
-        align-items: baseline;
-        white-space: nowrap;
-    }
-    .score .text-truncate {
-        min-width: 0;
+    /* Pinned to the bottom edge, spanning the container's side padding */
+    .action-bar {
+        position: sticky;
+        bottom: 0;
+        margin-inline: calc(var(--bs-gutter-x) * -0.5);
+        padding: 0.75rem calc(var(--bs-gutter-x) * 0.5);
+        background-color: var(--bs-body-bg);
+        border-top: 1px solid var(--bs-border-color);
     }
     .confirm-card::backdrop {
         background: rgba(0, 0, 0, 0.5);
@@ -521,8 +515,7 @@
     .confirm-card {
         width: calc(100% - 32px);
         max-width: 360px;
-    }
-    .table-color {
-        background-color: #155843;
+        background-color: var(--bs-body-bg);
+        color: var(--bs-body-color);
     }
 </style>

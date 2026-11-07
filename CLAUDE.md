@@ -14,6 +14,7 @@ A single-page SvelteKit app (Svelte 5 runes, TypeScript, Bootstrap 5) that keeps
 - `src/routes/+page.svelte` holds all match state and scoring logic.
 - `src/lib/components/GameSetup.svelte` is the setup form: two names and a race target per player, 14 to 100.
 - `src/lib/components/Ball.svelte` draws one tappable ball.
+- `src/app.html` loads Bootstrap from a CDN and sets `data-bs-theme` from the system light or dark setting. It also defines the `--felt` color and the `.btn-felt` button.
 - `src/lib/storage.ts` saves the match to localStorage. Bump `STORAGE_KEY` if the saved shape changes incompatibly.
 
 ## Scoring rules
@@ -24,7 +25,7 @@ A single-page SvelteKit app (Svelte 5 runes, TypeScript, Bootstrap 5) that keeps
 - Dead balls are one shared match total.
 - Each made or dead ball records whose turn it was. The opponent cannot change it during the same rack. Un-making a ball takes the points back from the player who made it.
 - An inning ends when both the rack's breaker and the opponent have had a turn.
-- After a win, balls can only be un-made and End Turn is disabled.
+- After a win, balls can only be un-made, and the bottom bar shows the winner and New Game instead of End Turn.
 - "Undo 9-ball" restores the match from before the last 9 until the next ball tap or End Turn.
 - Open tabs follow each other's saves through the `storage` event.
 

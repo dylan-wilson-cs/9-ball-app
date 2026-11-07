@@ -54,7 +54,8 @@
 <style>
     .ball {
         position: relative;
-        width: min(100px, 26vw);
+        /* The height cap keeps the whole scoring screen on short phones */
+        width: min(100px, 26vw, 14dvh);
         aspect-ratio: 1;
         padding: 0;
         border: none;
@@ -112,6 +113,11 @@
         box-shadow:
             0 6px 10px rgba(0, 0, 0, 0.35),
             inset -6px -8px 16px rgba(0, 0, 0, 0.35);
+    }
+
+    /* A faint rim so the 8 and dark balls stand out on a dark page */
+    :global([data-bs-theme="dark"]) .ball-body {
+        outline: 1px solid rgba(255, 255, 255, 0.2);
     }
 
     .ball-body.made {

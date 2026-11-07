@@ -28,62 +28,66 @@
     const NAME_PATTERN = ".*\\S.*";
 </script>
 
-<form class="row g-3" {onsubmit}>
-    <div>
-        <label for="player1" class="fs-2 form-label">Player 1</label>
-        <input
-            type="text"
-            class="form-control fs-3"
-            id="player1"
-            bind:value={player1}
-            pattern={NAME_PATTERN}
-            title="Enter a name"
-            required
-        />
-    </div>
-    <div>
-        <label for="player2" class="fs-2 form-label">Player 2</label>
-        <input
-            type="text"
-            class="form-control fs-3"
-            id="player2"
-            bind:value={player2}
-            pattern={NAME_PATTERN}
-            title="Enter a name"
-            required
-        />
-    </div>
-    <div>
-        <label for="raceTo1" class="fs-2 form-label"
-            >{player1.trim() || "Player 1"} races to</label
-        >
-        <input
-            type="number"
-            class="form-control fs-3"
-            id="raceTo1"
-            bind:value={raceTo1}
-            min={MIN_RACE}
-            max={MAX_RACE}
-            required
-        />
-    </div>
-    <div>
-        <label for="raceTo2" class="fs-2 form-label"
-            >{player2.trim() || "Player 2"} races to</label
-        >
-        <input
-            type="number"
-            class="form-control fs-3"
-            id="raceTo2"
-            bind:value={raceTo2}
-            min={MIN_RACE}
-            max={MAX_RACE}
-            required
-        />
-    </div>
-    <div class="col d-flex justify-content-center">
-        <button type="submit" class="btn btn-primary btn-lg w-75">
-            Start Game
-        </button>
-    </div>
+{#snippet playerFields(
+    n: 1 | 2,
+    name: string,
+    setName: (value: string) => void,
+    race: number,
+    setRace: (value: number) => void,
+)}
+    <fieldset class="card">
+        <div class="card-body">
+            <legend class="h5 fw-bold mb-2">Player {n}</legend>
+            <div class="row g-2">
+                <div class="col-8">
+                    <label for="player{n}" class="form-label small mb-1"
+                        >Name</label
+                    >
+                    <input
+                        type="text"
+                        class="form-control form-control-lg"
+                        id="player{n}"
+                        bind:value={() => name, setName}
+                        pattern={NAME_PATTERN}
+                        title="Enter a name"
+                        autocomplete="off"
+                        required
+                    />
+                </div>
+                <div class="col-4">
+                    <label for="raceTo{n}" class="form-label small mb-1"
+                        >Races to</label
+                    >
+                    <input
+                        type="number"
+                        inputmode="numeric"
+                        class="form-control form-control-lg"
+                        id="raceTo{n}"
+                        bind:value={() => race, setRace}
+                        min={MIN_RACE}
+                        max={MAX_RACE}
+                        required
+                    />
+                </div>
+            </div>
+        </div>
+    </fieldset>
+{/snippet}
+
+<form class="d-flex flex-column gap-3" {onsubmit}>
+    {@render playerFields(
+        1,
+        player1,
+        (v) => (player1 = v),
+        raceTo1,
+        (v) => (raceTo1 = v),
+    )}
+    {@render playerFields(
+        2,
+        player2,
+        (v) => (player2 = v),
+        raceTo2,
+        (v) => (raceTo2 = v),
+    )}
+    <button type="submit" class="btn btn-felt btn-lg w-100">Start Game</button>
 </form>

@@ -4,6 +4,21 @@
         <meta charset="utf-8" />
         <link rel="icon" href="%sveltekit.assets%/favicon.png" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="color-scheme" content="light dark" />
+        <script>
+            // Bootstrap themes by data-bs-theme, not by the system setting,
+            // so mirror the system setting onto it and follow changes
+            (() => {
+                const dark = matchMedia("(prefers-color-scheme: dark)");
+                const apply = () => {
+                    document.documentElement.dataset.bsTheme = dark.matches
+                        ? "dark"
+                        : "light";
+                };
+                apply();
+                dark.addEventListener("change", apply);
+            })();
+        </script>
         <link
             href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
             rel="stylesheet"
@@ -19,6 +34,21 @@
                 font-optical-sizing: auto;
                 font-weight: 400;
                 font-style: normal;
+            }
+            :root {
+                --felt: #155843;
+            }
+            .btn-felt {
+                --bs-btn-color: #fff;
+                --bs-btn-bg: var(--felt);
+                --bs-btn-border-color: var(--felt);
+                --bs-btn-hover-color: #fff;
+                --bs-btn-hover-bg: #114a38;
+                --bs-btn-hover-border-color: #114a38;
+                --bs-btn-active-color: #fff;
+                --bs-btn-active-bg: #0d3c2d;
+                --bs-btn-active-border-color: #0d3c2d;
+                --bs-btn-focus-shadow-rgb: 21, 88, 67;
             }
             .title {
                 font-family: "Libre Baskerville", serif;
