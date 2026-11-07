@@ -5,15 +5,25 @@
     interface Props {
         number: number;
         state: BallState;
+        // Name of the player who made the ball, when it is made
+        madeBy?: string;
+        // A locked ball is one the opponent made or killed this rack
+        locked?: boolean;
         onClick: () => void;
     }
 
-    let { number, state, onClick }: Props = $props();
+    let { number, state, madeBy, locked = false, onClick }: Props = $props();
 
     let color = $derived(BALL_COLORS[number]);
     let striped = $derived(number > 8);
     let label = $derived(
-        state === "sunk" ? "made" : state === "dead" ? "dead" : "on table"
+        state === "sunk"
+            ? madeBy
+                ? `made by ${madeBy}`
+                : "made"
+            : state === "dead"
+              ? "dead"
+              : "on table"
     );
 </script>
 
@@ -21,7 +31,8 @@
     type="button"
     class="ball"
     onclick={onClick}
-    aria-label="{number} ball, {label}"
+    disabled={locked}
+    aria-label="{number} ball, {label}{locked ? ', locked' : ''}"
 >
     <span
         class="ball-body"
@@ -54,7 +65,15 @@
         transition: transform 0.1s ease;
     }
 
-    .ball:active {
+    .ball:disabled {
+        cursor: not-allowed;
+    }
+
+    .ball:disabled .ball-body {
+        opacity: 0.2;
+    }
+
+    .ball:not(:disabled):active {
         transform: scale(0.94);
     }
 

@@ -125,6 +125,20 @@ function resetGame(): void
 - Balls still on the table when the 9-ball is made also count as dead
 - Un-making a ball (made -> dead) removes the points from the player who made it
 
+## Made Ball Tracking
+- Each made or dead ball records the player whose turn it was
+- Under each player's score, the balls that player made in the current rack show as small numbered balls
+- On a player's turn, balls the opponent made or killed this rack are locked: dimmed and not clickable
+- Balls on the table stay editable by either player
+- The record clears when the rack resets
+
+## Inning Tracking
+- An inning ends when the player who broke the rack and their opponent have each had a turn
+- "End Turn" by the non-breaking player starts the next inning
+- Shows the match total and the inning number in the current rack
+- The inning in progress counts toward the total, including the inning in which the 9-ball is made
+- The player who makes the 9-ball breaks the next rack, and the rack's inning count restarts at 1
+
 ## Styling Requirements
 - Bootstrap 5 responsive grid
 - Mobile-first design
