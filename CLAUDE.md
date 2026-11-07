@@ -5,8 +5,9 @@ A single-page SvelteKit app (Svelte 5 runes, TypeScript, Bootstrap 5) that keeps
 ## Commands
 
 - `npm run dev` starts the dev server.
-- `npm run check` runs svelte-check. It must report 0 errors and 0 warnings.
-- `npm run build` builds the app.
+- `npm run check` runs svelte-check with strict TypeScript settings. It must report 0 errors and 0 warnings.
+- `npm run format` formats everything with Prettier. `npm run format:check` only reports.
+- `npm run build` writes a static site to `build/` with adapter-static. `npm run preview` serves it.
 
 ## Files
 

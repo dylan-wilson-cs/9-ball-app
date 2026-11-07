@@ -6,7 +6,7 @@
         number: number;
         state: BallState;
         // Name of the player who made the ball, when it is made
-        madeBy?: string;
+        madeBy?: string | undefined;
         // A locked ball is one the opponent made or killed this rack
         locked?: boolean;
         onClick: () => void;
@@ -23,7 +23,7 @@
                 : "made"
             : state === "dead"
               ? "dead"
-              : "on table"
+              : "on table",
     );
 </script>
 
@@ -89,12 +89,11 @@
         align-items: center;
         justify-content: center;
         border-radius: 50%;
-        background:
-            radial-gradient(
-                circle at 45% 40%,
-                var(--ball-color) 45%,
-                color-mix(in srgb, var(--ball-color) 55%, black) 100%
-            );
+        background: radial-gradient(
+            circle at 45% 40%,
+            var(--ball-color) 45%,
+            color-mix(in srgb, var(--ball-color) 55%, black) 100%
+        );
         box-shadow:
             0 6px 10px rgba(0, 0, 0, 0.35),
             inset -6px -8px 14px rgba(0, 0, 0, 0.3);
@@ -104,13 +103,12 @@
     }
 
     .ball-body.striped {
-        background:
-            linear-gradient(
-                to bottom,
-                #f8f6ef 0 24%,
-                var(--ball-color) 24% 76%,
-                #f8f6ef 76% 100%
-            );
+        background: linear-gradient(
+            to bottom,
+            #f8f6ef 0 24%,
+            var(--ball-color) 24% 76%,
+            #f8f6ef 76% 100%
+        );
         box-shadow:
             0 6px 10px rgba(0, 0, 0, 0.35),
             inset -6px -8px 16px rgba(0, 0, 0, 0.35);

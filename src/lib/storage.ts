@@ -35,7 +35,10 @@ function isPlayer(value: unknown): value is Player {
     return value === 0 || value === 1;
 }
 
-type StoredMatch = Omit<SavedMatch, keyof typeof INNING_DEFAULTS | "rackBreaker"> &
+type StoredMatch = Omit<
+    SavedMatch,
+    keyof typeof INNING_DEFAULTS | "rackBreaker"
+> &
     Partial<Pick<SavedMatch, keyof typeof INNING_DEFAULTS | "rackBreaker">>;
 
 function isStoredMatch(value: unknown): value is StoredMatch {

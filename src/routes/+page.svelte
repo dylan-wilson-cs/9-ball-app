@@ -10,10 +10,11 @@
 
     // Game state using runes
     let isStarted = $state(false);
-    let player1 = $state("");
-    let player2 = $state("");
-    let raceTo1 = $state(0);
-    let raceTo2 = $state(0);
+    // Defaults for the first setup form; later forms show the last match
+    let player1 = $state("John");
+    let player2 = $state("Doe");
+    let raceTo1 = $state(25);
+    let raceTo2 = $state(25);
     let currentPlayer = $state<Player>(0);
     let score1 = $state(0);
     let score2 = $state(0);
@@ -22,13 +23,11 @@
     // points back from this player even after the turn has changed.
     let ballScorer = $state<(Player | null)[]>(Array(9).fill(null));
     // Ball numbers each player made in the current rack
-    let madeInRack = $derived(
-        ([0, 1] as const).map((player) =>
-            ballScorer.flatMap((scorer, i) =>
-                scorer === player && ballStates[i] === "sunk" ? [i + 1] : []
-            )
-        )
-    );
+    function madeInRack(player: Player): number[] {
+        return ballScorer.flatMap((scorer, i) =>
+            scorer === player && ballStates[i] === "sunk" ? [i + 1] : [],
+        );
+    }
 
     // A ball the opponent made or killed this rack cannot be changed on
     // your turn
@@ -43,7 +42,7 @@
     // Dead balls from completed racks (shared total, not per player)
     let deadCarry = $state(0);
     let deadInRack = $derived(
-        ballStates.filter((state) => state === "dead").length
+        ballStates.filter((state) => state === "dead").length,
     );
     let deadTotal = $derived(deadCarry + deadInRack);
 
@@ -146,11 +145,9 @@
         isStarted = false;
     }
 
-    function startGame(p1: string, p2: string, rt1: number, rt2: number) {
-        player1 = p1;
-        player2 = p2;
-        raceTo1 = rt1;
-        raceTo2 = rt2;
+    function startGame() {
+        player1 = player1.trim();
+        player2 = player2.trim();
         isStarted = true;
         resetScores();
     }
@@ -177,7 +174,7 @@
     let nineDialog = $state<HTMLDialogElement>();
     let leftoversOnTable = $derived(
         ballStates.filter((state, i) => i !== 8 && state === "available")
-            .length
+            .length,
     );
 
     $effect(() => {
@@ -220,6 +217,7 @@
 
         const isBall9 = ballIndex === 8;
         const currentState = ballStates[ballIndex];
+        if (currentState === undefined) return;
         const nextState = getNextBallState(currentState, isBall9);
         const leftovers = leftoversOnTable;
 
@@ -257,14 +255,14 @@
             rackBreaker = currentPlayer;
         } else {
             ballStates = ballStates.map((state, i) =>
-                i === ballIndex ? nextState : state
+                i === ballIndex ? nextState : state,
             );
             ballScorer = ballScorer.map((scorer, i) =>
                 i === ballIndex
                     ? nextState === "available"
                         ? null
                         : currentPlayer
-                    : scorer
+                    : scorer,
             );
         }
     }
@@ -290,7 +288,9 @@
 {#snippet madeBalls(numbers: number[])}
     <div
         class="made-balls d-flex justify-content-center flex-wrap gap-1 mt-1"
-        aria-label="Made this rack: {numbers.length ? numbers.join(', ') : 'none'}"
+        aria-label="Made this rack: {numbers.length
+            ? numbers.join(', ')
+            : 'none'}"
     >
         {#each numbers as number}
             <span
@@ -317,7 +317,13 @@
     {#if !restored}
         <!-- Wait for the saved match to load to avoid flashing the setup form -->
     {:else if !isStarted}
-        <GameSetup onStartGame={startGame} />
+        <GameSetup
+            bind:player1
+            bind:player2
+            bind:raceTo1
+            bind:raceTo2
+            onStartGame={startGame}
+        />
     {:else}
         <!-- Score Header -->
         <div class="row g-3 mb-3">
@@ -327,11 +333,10 @@
                     class:active={currentPlayer === 0}
                     title={player1}
                 >
-                    <span class="text-truncate">{player1}</span>:&nbsp;{score1}<span
-                        class="race-target">/{raceTo1}</span
-                    >
+                    <span class="text-truncate">{player1}</span
+                    >:&nbsp;{score1}<span class="race-target">/{raceTo1}</span>
                 </h2>
-                {@render madeBalls(madeInRack[0])}
+                {@render madeBalls(madeInRack(0))}
             </div>
             <div class="col-6">
                 <h2
@@ -339,11 +344,10 @@
                     class:active={currentPlayer === 1}
                     title={player2}
                 >
-                    <span class="text-truncate">{player2}</span>:&nbsp;{score2}<span
-                        class="race-target">/{raceTo2}</span
-                    >
+                    <span class="text-truncate">{player2}</span
+                    >:&nbsp;{score2}<span class="race-target">/{raceTo2}</span>
                 </h2>
-                {@render madeBalls(madeInRack[1])}
+                {@render madeBalls(madeInRack(1))}
             </div>
         </div>
 
@@ -403,35 +407,34 @@
             aria-labelledby="confirm-nine-title"
             onclose={() => (confirmingNine = false)}
         >
-                    <div class="card-body text-center">
-                        <h2 id="confirm-nine-title" class="h4 mb-2">
-                            Pocket the 9-ball?
-                        </h2>
-                        <p class="mb-3">
-                            {#if leftoversOnTable > 0}
-                                The {leftoversOnTable}
-                                {leftoversOnTable === 1 ? "ball" : "balls"} still
-                                on the table will count as dead, and the rack
-                                will reset.
-                            {:else}
-                                The rack will reset.
-                            {/if}
-                        </p>
-                        <div class="d-flex gap-2 justify-content-center">
-                            <button
-                                class="btn btn-outline-secondary btn-lg"
-                                onclick={() => (confirmingNine = false)}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                class="btn btn-success btn-lg"
-                                onclick={confirmNine}
-                            >
-                                Pocket 9
-                            </button>
-                        </div>
-                    </div>
+            <div class="card-body text-center">
+                <h2 id="confirm-nine-title" class="h4 mb-2">
+                    Pocket the 9-ball?
+                </h2>
+                <p class="mb-3">
+                    {#if leftoversOnTable > 0}
+                        The {leftoversOnTable}
+                        {leftoversOnTable === 1 ? "ball" : "balls"} still on the table
+                        will count as dead, and the rack will reset.
+                    {:else}
+                        The rack will reset.
+                    {/if}
+                </p>
+                <div class="d-flex gap-2 justify-content-center">
+                    <button
+                        class="btn btn-outline-secondary btn-lg"
+                        onclick={() => (confirmingNine = false)}
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        class="btn btn-success btn-lg"
+                        onclick={confirmNine}
+                    >
+                        Pocket 9
+                    </button>
+                </div>
+            </div>
         </dialog>
 
         <div class="d-flex justify-content-center">

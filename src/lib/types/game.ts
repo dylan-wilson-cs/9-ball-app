@@ -19,7 +19,7 @@ export const BALL_COLORS: BallColors = {
 
 export function getNextBallState(
     currentState: BallState,
-    isBall9: boolean
+    isBall9: boolean,
 ): BallState {
     if (isBall9) {
         return currentState === "available" ? "sunk" : "available";

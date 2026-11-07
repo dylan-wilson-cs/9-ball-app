@@ -1,23 +1,25 @@
 <script lang="ts">
+    // The fields are bound to the page's match state, so the last names and
+    // race targets are still filled in after a match ends
     interface Props {
-        onStartGame: (
-            player1: string,
-            player2: string,
-            raceTo1: number,
-            raceTo2: number
-        ) => void;
+        player1: string;
+        player2: string;
+        raceTo1: number;
+        raceTo2: number;
+        onStartGame: () => void;
     }
 
-    let { onStartGame }: Props = $props();
-
-    let player1 = $state("John");
-    let player2 = $state("Doe");
-    let raceTo1 = $state(25);
-    let raceTo2 = $state(25);
+    let {
+        player1 = $bindable(),
+        player2 = $bindable(),
+        raceTo1 = $bindable(),
+        raceTo2 = $bindable(),
+        onStartGame,
+    }: Props = $props();
 
     let onsubmit = (e: Event) => {
         e.preventDefault();
-        onStartGame(player1.trim(), player2.trim(), raceTo1, raceTo2);
+        onStartGame();
     };
 
     const MIN_RACE = 14;
@@ -52,7 +54,9 @@
         />
     </div>
     <div>
-        <label for="raceTo1" class="fs-2 form-label">{player1.trim() || "Player 1"} races to</label>
+        <label for="raceTo1" class="fs-2 form-label"
+            >{player1.trim() || "Player 1"} races to</label
+        >
         <input
             type="number"
             class="form-control fs-3"
@@ -64,7 +68,9 @@
         />
     </div>
     <div>
-        <label for="raceTo2" class="fs-2 form-label">{player2.trim() || "Player 2"} races to</label>
+        <label for="raceTo2" class="fs-2 form-label"
+            >{player2.trim() || "Player 2"} races to</label
+        >
         <input
             type="number"
             class="form-control fs-3"
