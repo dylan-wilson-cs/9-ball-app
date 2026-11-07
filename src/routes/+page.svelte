@@ -8,7 +8,8 @@
     let isStarted = $state(false);
     let player1 = $state("");
     let player2 = $state("");
-    let raceTo = $state(0);
+    let raceTo1 = $state(0);
+    let raceTo2 = $state(0);
     let currentPlayer = $state(0);
     let score1 = $state(0);
     let score2 = $state(0);
@@ -16,15 +17,16 @@
 
     // Derived values
     let winner = $derived.by(() => {
-        if (score1 >= raceTo) return 0;
-        if (score2 >= raceTo) return 1;
+        if (score1 >= raceTo1) return 0;
+        if (score2 >= raceTo2) return 1;
         return -1;
     });
 
-    function startGame(p1: string, p2: string, rt: number) {
+    function startGame(p1: string, p2: string, rt1: number, rt2: number) {
         player1 = p1;
         player2 = p2;
-        raceTo = rt;
+        raceTo1 = rt1;
+        raceTo2 = rt2;
         isStarted = true;
         resetScores();
     }
@@ -106,7 +108,7 @@
                     class="fs-2 text-center m-0"
                     class:active={currentPlayer === 0}
                 >
-                    {player1}: {score1}
+                    {player1}: {score1}<span class="race-target">/{raceTo1}</span>
                 </h2>
             </div>
             <div class="col-6">
@@ -114,7 +116,7 @@
                     class="fs-2 text-center m-0"
                     class:active={currentPlayer === 1}
                 >
-                    {player2}: {score2}
+                    {player2}: {score2}<span class="race-target">/{raceTo2}</span>
                 </h2>
             </div>
         </div>
@@ -158,6 +160,11 @@
     .active {
         color: #007bff;
         font-weight: bold;
+    }
+    .race-target {
+        font-size: 0.6em;
+        font-weight: normal;
+        color: #6c757d;
     }
     .table-color {
         background-color: #155843;

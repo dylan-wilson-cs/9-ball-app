@@ -4,7 +4,7 @@ export type BallState = "available" | "sunk" | "dead";
 export interface GameState {
     isStarted: boolean;
     players: [string, string];
-    raceTo: number;
+    raceTo: [number, number];
     currentPlayer: Player;
     scores: [number, number];
     ballStates: BallState[];

@@ -1,17 +1,23 @@
 <script lang="ts">
     interface Props {
-        onStartGame: (player1: string, player2: string, raceTo: number) => void;
+        onStartGame: (
+            player1: string,
+            player2: string,
+            raceTo1: number,
+            raceTo2: number
+        ) => void;
     }
 
     let { onStartGame }: Props = $props();
 
     let player1 = $state("John");
     let player2 = $state("Doe");
-    let raceTo = $state(25);
+    let raceTo1 = $state(25);
+    let raceTo2 = $state(25);
 
     let onsubmit = (e: Event) => {
         e.preventDefault();
-        onStartGame(player1, player2, raceTo);
+        onStartGame(player1, player2, raceTo1, raceTo2);
     };
 </script>
 
@@ -37,12 +43,23 @@
         />
     </div>
     <div>
-        <label for="raceTo" class="fs-2 form-label">Race to</label>
+        <label for="raceTo1" class="fs-2 form-label">{player1 || "Player 1"} races to</label>
         <input
             type="number"
             class="form-control fs-3"
-            id="raceTo"
-            bind:value={raceTo}
+            id="raceTo1"
+            bind:value={raceTo1}
+            min="1"
+            required
+        />
+    </div>
+    <div>
+        <label for="raceTo2" class="fs-2 form-label">{player2 || "Player 2"} races to</label>
+        <input
+            type="number"
+            class="form-control fs-3"
+            id="raceTo2"
+            bind:value={raceTo2}
             min="1"
             required
         />
