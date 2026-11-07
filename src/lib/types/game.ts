@@ -1,15 +1,6 @@
 export type Player = 0 | 1;
 export type BallState = "available" | "sunk" | "dead";
 
-export interface GameState {
-    isStarted: boolean;
-    players: [string, string];
-    raceTo: [number, number];
-    currentPlayer: Player;
-    scores: [number, number];
-    ballStates: BallState[];
-}
-
 export interface BallColors {
     [key: number]: string;
 }
@@ -25,10 +16,6 @@ export const BALL_COLORS: BallColors = {
     8: "#151515", // Black
     9: "#F5C211", // Yellow stripe
 };
-
-export const NINE_BALL_INDEX = 8;
-export const NINE_BALL_POINTS = 2;
-export const REGULAR_BALL_POINTS = 1;
 
 export function getNextBallState(
     currentState: BallState,
