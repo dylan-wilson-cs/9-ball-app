@@ -4,6 +4,8 @@
     import { getNextBallState } from "$lib/types/game";
     import type { BallState, Player } from "$lib/types/game";
     import Icon from "../images/9ball.png";
+    import { onMount } from "svelte";
+    import { loadMatch, saveMatch } from "$lib/storage";
 
     // Game state using runes
     let isStarted = $state(false);
@@ -31,6 +33,64 @@
         if (score2 >= raceTo2) return 1;
         return -1;
     });
+
+    // Persist the match so a reload or browser restart resumes it.
+    // Saving starts only after the saved match has been loaded, so the
+    // initial empty state never overwrites it.
+    let restored = $state(false);
+
+    onMount(() => {
+        const saved = loadMatch();
+        if (saved) {
+            isStarted = saved.isStarted;
+            player1 = saved.player1;
+            player2 = saved.player2;
+            raceTo1 = saved.raceTo1;
+            raceTo2 = saved.raceTo2;
+            currentPlayer = saved.currentPlayer;
+            score1 = saved.score1;
+            score2 = saved.score2;
+            ballStates = saved.ballStates;
+            ballScorer = saved.ballScorer;
+            deadCarry = saved.deadCarry;
+        }
+        restored = true;
+    });
+
+    $effect(() => {
+        if (!restored) return;
+        saveMatch({
+            isStarted,
+            player1,
+            player2,
+            raceTo1,
+            raceTo2,
+            currentPlayer,
+            score1,
+            score2,
+            ballStates: [...ballStates],
+            ballScorer: [...ballScorer],
+            deadCarry,
+        });
+    });
+
+    // "End Match" needs a second tap within a few seconds, so a stray tap
+    // can't wipe a saved match.
+    let confirmingEnd = $state(false);
+    let confirmEndTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function endMatch() {
+        if (!confirmingEnd) {
+            confirmingEnd = true;
+            clearTimeout(confirmEndTimer);
+            confirmEndTimer = setTimeout(() => (confirmingEnd = false), 3000);
+            return;
+        }
+        clearTimeout(confirmEndTimer);
+        confirmingEnd = false;
+        resetScores();
+        isStarted = false;
+    }
 
     function startGame(p1: string, p2: string, rt1: number, rt2: number) {
         player1 = p1;
@@ -131,7 +191,9 @@
 </header>
 
 <div class="container-fluid">
-    {#if !isStarted}
+    {#if !restored}
+        <!-- Wait for the saved match to load to avoid flashing the setup form -->
+    {:else if !isStarted}
         <GameSetup onStartGame={startGame} />
     {:else}
         <!-- Score Header -->
@@ -226,6 +288,17 @@
         <div class="d-flex justify-content-center">
             <button class="btn btn-primary btn-lg w-75" onclick={endTurn}>
                 End Turn
+            </button>
+        </div>
+
+        <div class="d-flex justify-content-center mt-3 mb-4">
+            <button
+                class="btn btn-lg w-75"
+                class:btn-outline-secondary={!confirmingEnd}
+                class:btn-danger={confirmingEnd}
+                onclick={endMatch}
+            >
+                {confirmingEnd ? "Tap again to end match" : "End Match"}
             </button>
         </div>
     {/if}

@@ -148,6 +148,12 @@ function resetGame(): void
 5. First player to reach their own target score wins
 6. Option to reset/start new game
 
+## Match Persistence
+- The match is saved to the browser's localStorage after every change
+- Reloading the page, closing the tab, or restarting the browser resumes the match
+- "End Match" (tap twice to confirm) returns to setup and clears the saved match
+- If storage is unavailable or the save is invalid, the app starts at setup
+
 ## Error Handling
 - Invalid player names
 - Invalid race to points value
